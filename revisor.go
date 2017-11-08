@@ -14,30 +14,30 @@ func SetSomeOption(opt string) option {
 
 // NewRequestVerifier returns a function that can be used to verify if request
 // satisfies OpenAPI definition constraints
-func NewRequestVerifier(definition string, options ...option) func(*http.Request) error {
+func NewRequestVerifier(definition string, options ...option) (func(*http.Request) error, error) {
 	a := apiVerifier{name: definition}
 	a.setOptions(options...)
-	return a.verifyRequest
+	return a.verifyRequest, nil
 }
 
 // NewResponseVerifier returns a function that can be used to verify if response
 // satisfies OpenAPI definition constraints. Two perform such alidation we need
 // to specify context in which current response was received, and that is represented
 // by method and url paramters
-func NewResponseVerifier(definition, method, url string, options ...option) func(*http.Response) error {
+func NewResponseVerifier(definition, method, url string, options ...option) (func(*http.Response) error, error) {
 	a := apiVerifier{name: definition}
 	a.setOptions(options...)
 	return func(res *http.Response) error {
 		return a.verifyResponse(method, url, res)
-	}
+	}, nil
 }
 
 // NewVerifier returns a function that can be used to verify both - a request
 // and the response made in the context of the request
-func NewVerifier(definition string, options ...option) func(*http.Request, *http.Response) error {
+func NewVerifier(definition string, options ...option) (func(*http.Request, *http.Response) error, error) {
 	a := apiVerifier{name: definition}
 	a.setOptions(options...)
-	return a.verify
+	return a.verify, nil
 }
 
 // apiVerifier implements various verification functions and encloses various

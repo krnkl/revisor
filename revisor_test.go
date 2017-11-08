@@ -3,17 +3,25 @@ package revisor
 import (
 	"net/http/httptest"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestRequestVerifier(t *testing.T) {
-	verifier := NewRequestVerifier("RequestVerifier")
-	verifier(nil)
+	verifier, err := NewRequestVerifier("RequestVerifier")
+	assert.NoError(t, err)
+	err = verifier(nil)
+	assert.NoError(t, err)
 }
 func TestResponseVerifier(t *testing.T) {
-	verifier := NewResponseVerifier("GET", "/path", "ResponseVerifier")
-	verifier(nil)
+	verifier, err := NewResponseVerifier("GET", "/path", "ResponseVerifier")
+	assert.NoError(t, err)
+	err = verifier(nil)
+	assert.NoError(t, err)
 }
 func TestVerifier(t *testing.T) {
-	verifier := NewVerifier("RequestResponseVerifier")
-	verifier(httptest.NewRequest("GET", "/", nil), nil)
+	verifier, err := NewVerifier("RequestResponseVerifier")
+	assert.NoError(t, err)
+	err = verifier(httptest.NewRequest("GET", "/", nil), nil)
+	assert.NoError(t, err)
 }
