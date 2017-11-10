@@ -6,6 +6,7 @@ import (
 
 type option func(*apiVerifier)
 
+// SetSomeOption is an example implementation of option setter function
 func SetSomeOption(opt string) option {
 	return func(a *apiVerifier) {
 		a.opt = opt
