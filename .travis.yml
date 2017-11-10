@@ -17,7 +17,7 @@ install:
 
 script:
 - go vet -v
-- golint -set_exit_status .
+- gometalinter --exclude="which can be annoying to use" .
 - go test -v -covermode=count -coverprofile=profile.cov .
 
 after_success:
