@@ -1,0 +1,24 @@
+language: go
+
+go:
+- 1.8
+- 1.9
+
+env:
+  global:
+  - DOCKER_COMPOSE_VERSION="1.7.1"
+
+install:
+- git clone https://github.com/zalando/nakadi.git nakadi
+- go get -v github.com/pkg/errors
+- go get -v github.com/gorilla/mux
+- go get -v github.com/mattn/goveralls
+- go get -v github.com/stretchr/testify/...
+
+script:
+- go vet -v
+- golint -set_exit_status .
+- go test -v -covermode=count -coverprofile=profile.cov .
+
+after_success:
+- goveralls -coverprofile=profile.cov -service=travis-ci
