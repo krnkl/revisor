@@ -1,7 +1,12 @@
 package revisor
 
 import (
+	"io/ioutil"
 	"net/http"
+	"net/url"
+	"os"
+
+	"github.com/pkg/errors"
 )
 
 type option func(*apiVerifier)
@@ -83,3 +88,37 @@ func (a *apiVerifier) setOptions(options ...option) {
 		opt(a)
 	}
 }
+
+// loadDefinition loads API definition located by definitionPath
+// which can be either a path to a local file or a URL
+func loadDefinition(definitionPath string) ([]byte, error) {
+	if isValidUrl(definitionPath) {
+		return loadByURL(definitionPath)
+	} else {
+		if _, err := os.Stat(definitionPath); !os.IsNotExist(err) {
+			return ioutil.ReadFile(definitionPath)
+		}
+	}
+	return nil, errors.New("api definition failed to load")
+}
+
+// loadByURL berforms GET request to fetch definition located by URL
+func loadByURL(url string) ([]byte, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to perform request")
+	}
+	defer resp.Body.Close()
+	return ioutil.ReadAll(resp.Body)
+}
+
+// isValidUrl checks if specified path is a valid URL
+func isValidUrl(path string) bool {
+	_, err := url.ParseRequestURI(path)
+	if err != nil {
+		return false
+	}
+	return true
+}
+
+func buildDocument(rawDef []byte) {}
