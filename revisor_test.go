@@ -11,22 +11,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var sampleV2 = "./internal/testdata/sample_open_api_v2.yaml"
+
 func TestRequestVerifier(t *testing.T) {
-	verifier, err := NewRequestVerifier("RequestVerifier")
+	verifier, err := NewRequestVerifier(sampleV2)
 	assert.NoError(t, err)
 	err = verifier(nil)
 	assert.NoError(t, err)
 }
 
 func TestResponseVerifier(t *testing.T) {
-	verifier, err := NewResponseVerifier("GET", "/path", "ResponseVerifier")
+	verifier, err := NewResponseVerifier(sampleV2, "GET", "/path")
 	assert.NoError(t, err)
 	err = verifier(nil)
 	assert.NoError(t, err)
 }
 
 func TestVerifier(t *testing.T) {
-	verifier, err := NewVerifier("RequestResponseVerifier")
+	verifier, err := NewVerifier(sampleV2)
 	assert.NoError(t, err)
 	err = verifier(httptest.NewRequest("GET", "/", nil), nil)
 	assert.NoError(t, err)
@@ -35,7 +37,7 @@ func TestVerifier(t *testing.T) {
 func Test_LoadDefinition(t *testing.T) {
 
 	http.HandleFunc("/swagger.yaml", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "./internal/testdata/sample_open_api_v2.yaml")
+		http.ServeFile(w, r, sampleV2)
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -49,7 +51,7 @@ func Test_LoadDefinition(t *testing.T) {
 	})
 
 	t.Run("success loading local file", func(t *testing.T) {
-		b, err := loadDefinition("./internal/testdata/sample_open_api_v2.yaml")
+		b, err := loadDefinition(sampleV2)
 		assert.NoError(t, err)
 		assert.NotNil(t, b)
 	})

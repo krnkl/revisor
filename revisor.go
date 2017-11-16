@@ -21,9 +21,9 @@ func SetSomeOption(opt string) option {
 // NewRequestVerifier returns a function that can be used to verify if request
 // satisfies OpenAPI definition constraints
 func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Request) error, error) {
-	a := newAPIVerifier(definitionPath)
+	a, err := newAPIVerifier(definitionPath)
 	a.setOptions(options...)
-	return a.verifyRequest, nil
+	return a.verifyRequest, err
 }
 
 // NewResponseVerifier returns a function that can be used to verify if response
@@ -31,28 +31,36 @@ func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Re
 // to specify context in which current response was received, and that is represented
 // by method and url paramters
 func NewResponseVerifier(definitionPath, method, url string, options ...option) (func(*http.Response) error, error) {
-	a := newAPIVerifier(definitionPath)
+	a, err := newAPIVerifier(definitionPath)
 	a.setOptions(options...)
 	return func(res *http.Response) error {
 		return a.verifyResponse(method, url, res)
-	}, nil
+	}, err
 }
 
 // NewVerifier returns a function that can be used to verify both - a request
 // and the response made in the context of the request
 func NewVerifier(definitionPath string, options ...option) (func(*http.Request, *http.Response) error, error) {
-	a := newAPIVerifier(definitionPath)
+	a, err := newAPIVerifier(definitionPath)
 	a.setOptions(options...)
-	return a.verify, nil
+	return a.verify, err
 }
 
-func newAPIVerifier(definitionPath string) *apiVerifier {
+func newAPIVerifier(definitionPath string) (*apiVerifier, error) {
 	mapper := newSimpleMapper(map[string][]string{})
+	b, err := loadDefinition(definitionPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load definition")
+	}
+	err = buildDocument(b)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to build api document")
+	}
 	a := &apiVerifier{
 		name:   definitionPath,
 		mapper: mapper,
 	}
-	return a
+	return a, nil
 }
 
 // apiVerifier implements various verification functions and encloses various
@@ -92,14 +100,13 @@ func (a *apiVerifier) setOptions(options ...option) {
 // loadDefinition loads API definition located by definitionPath
 // which can be either a path to a local file or a URL
 func loadDefinition(definitionPath string) ([]byte, error) {
-	if isValidUrl(definitionPath) {
+	if isValidURL(definitionPath) {
 		return loadByURL(definitionPath)
-	} else {
-		if _, err := os.Stat(definitionPath); !os.IsNotExist(err) {
-			return ioutil.ReadFile(definitionPath)
-		}
-		return nil, errors.New("api definition failed to load: no file found")
 	}
+	if _, err := os.Stat(definitionPath); !os.IsNotExist(err) {
+		return ioutil.ReadFile(definitionPath)
+	}
+	return nil, errors.New("api definition failed to load: no file found")
 }
 
 // loadByURL berforms GET request to fetch definition located by URL
@@ -109,19 +116,24 @@ func loadByURL(url string) ([]byte, error) {
 		return nil, errors.Wrap(err, "failed to perform request")
 	}
 	if resp.StatusCode == http.StatusOK {
-		defer resp.Body.Close()
+		defer func() {
+			err := resp.Body.Close()
+			if err != nil {
+				panic(err)
+			}
+		}()
+
 		return ioutil.ReadAll(resp.Body)
 	}
 	return nil, errors.New("request return error: " + http.StatusText(resp.StatusCode))
 }
 
 // isValidUrl checks if specified path is a valid URL
-func isValidUrl(path string) bool {
+func isValidURL(path string) bool {
 	_, err := url.ParseRequestURI(path)
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
 
-func buildDocument(rawDef []byte) {}
+func buildDocument(rawDef []byte) error {
+	return nil
+}
