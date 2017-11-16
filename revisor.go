@@ -98,8 +98,8 @@ func loadDefinition(definitionPath string) ([]byte, error) {
 		if _, err := os.Stat(definitionPath); !os.IsNotExist(err) {
 			return ioutil.ReadFile(definitionPath)
 		}
+		return nil, errors.New("api definition failed to load: no file found")
 	}
-	return nil, errors.New("api definition failed to load")
 }
 
 // loadByURL berforms GET request to fetch definition located by URL
@@ -108,8 +108,11 @@ func loadByURL(url string) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to perform request")
 	}
-	defer resp.Body.Close()
-	return ioutil.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusOK {
+		defer resp.Body.Close()
+		return ioutil.ReadAll(resp.Body)
+	}
+	return nil, errors.New("request return error: " + http.StatusText(resp.StatusCode))
 }
 
 // isValidUrl checks if specified path is a valid URL
