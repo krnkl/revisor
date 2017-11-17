@@ -1,12 +1,16 @@
 package revisor
 
 import (
-	"io/ioutil"
+	"encoding/json"
 	"net/http"
-	"net/url"
-	"os"
 
+	"github.com/go-openapi/loads"
+	"github.com/go-openapi/swag"
 	"github.com/pkg/errors"
+)
+
+const (
+	ver2 = "2.0"
 )
 
 type option func(*apiVerifier)
@@ -47,18 +51,23 @@ func NewVerifier(definitionPath string, options ...option) (func(*http.Request, 
 }
 
 func newAPIVerifier(definitionPath string) (*apiVerifier, error) {
-	mapper := newSimpleMapper(map[string][]string{})
-	b, err := loadDefinition(definitionPath)
+
+	b, err := swag.LoadFromFileOrHTTP(definitionPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to load definition")
 	}
-	err = buildDocument(b)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to build api document")
-	}
+
 	a := &apiVerifier{
-		name:   definitionPath,
-		mapper: mapper,
+		definitionPath: definitionPath,
+	}
+	err = a.initDocument(b)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to build Document")
+	}
+
+	err = a.initMapper()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create request mapper")
 	}
 	return a, nil
 }
@@ -66,9 +75,10 @@ func newAPIVerifier(definitionPath string) (*apiVerifier, error) {
 // apiVerifier implements various verification functions and encloses various
 // verification options as well as an OpenAPI Document
 type apiVerifier struct {
-	name   string
-	opt    string
-	mapper *simpleMapper
+	definitionPath string
+	opt            string
+	mapper         *simpleMapper
+	doc            *loads.Document
 }
 
 // verifyRequest verifies if request is valid according to OpenAPI definition
@@ -97,43 +107,27 @@ func (a *apiVerifier) setOptions(options ...option) {
 	}
 }
 
-// loadDefinition loads API definition located by definitionPath
-// which can be either a path to a local file or a URL
-func loadDefinition(definitionPath string) ([]byte, error) {
-	if isValidURL(definitionPath) {
-		return loadByURL(definitionPath)
+func (a *apiVerifier) initDocument(raw []byte) error {
+	rawJSON := json.RawMessage(raw)
+	if swag.YAMLMatcher(a.definitionPath) {
+		yamlDoc, err := swag.BytesToYAMLDoc(raw)
+		if err != nil {
+			return errors.Wrap(err, "failed to parse yaml document")
+		}
+		rawJSON, err = swag.YAMLToJSON(yamlDoc)
+		if err != nil {
+			return errors.Wrap(err, "failed to convert doc to json")
+		}
 	}
-	if _, err := os.Stat(definitionPath); !os.IsNotExist(err) {
-		return ioutil.ReadFile(definitionPath)
-	}
-	return nil, errors.New("api definition failed to load: no file found")
-}
-
-// loadByURL berforms GET request to fetch definition located by URL
-func loadByURL(url string) ([]byte, error) {
-	resp, err := http.Get(url)
+	doc, err := loads.Analyzed(rawJSON, ver2)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to perform request")
+		return errors.Wrap(err, "failed to load swagger spec")
 	}
-	if resp.StatusCode == http.StatusOK {
-		defer func() {
-			err := resp.Body.Close()
-			if err != nil {
-				panic(err)
-			}
-		}()
-
-		return ioutil.ReadAll(resp.Body)
-	}
-	return nil, errors.New("request return error: " + http.StatusText(resp.StatusCode))
+	a.doc = doc
+	return nil
 }
 
-// isValidUrl checks if specified path is a valid URL
-func isValidURL(path string) bool {
-	_, err := url.ParseRequestURI(path)
-	return err == nil
-}
-
-func buildDocument(rawDef []byte) error {
+func (a *apiVerifier) initMapper() error {
+	a.mapper = newSimpleMapper(map[string][]string{})
 	return nil
 }
