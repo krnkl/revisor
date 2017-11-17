@@ -14,7 +14,10 @@ install:
 - go get -v github.com/gorilla/mux
 - go get -v github.com/mattn/goveralls
 - go get -v github.com/stretchr/testify/...
-- go get -v github.com/go-openapi/...
+- go get -v github.com/go-openapi/swag
+- go get -v github.com/go-openapi/loads
+- go get -v github.com/go-openapi/analysis
+- go get -v github.com/go-openapi/spec
 
 
 before_script:
