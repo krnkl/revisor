@@ -123,11 +123,46 @@ func (a *apiVerifier) initDocument(raw []byte) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to load swagger spec")
 	}
-	a.doc = doc
+	a.doc, err = doc.Expanded(nil)
+	if err != nil {
+		return errors.Wrap(err, "failed to expand document")
+	}
 	return nil
 }
 
 func (a *apiVerifier) initMapper() error {
-	a.mapper = newSimpleMapper(map[string][]string{})
+	requestsMap := make(map[string][]string)
+	for path, pathItem := range a.doc.Spec().Paths.Paths {
+
+		if pathItem.Get != nil {
+			requestsMap[http.MethodGet] = append(requestsMap[http.MethodGet], path)
+			continue
+		}
+		if pathItem.Put != nil {
+			requestsMap[http.MethodPut] = append(requestsMap[http.MethodPut], path)
+			continue
+		}
+		if pathItem.Post != nil {
+			requestsMap[http.MethodPost] = append(requestsMap[http.MethodPost], path)
+			continue
+		}
+		if pathItem.Delete != nil {
+			requestsMap[http.MethodDelete] = append(requestsMap[http.MethodDelete], path)
+			continue
+		}
+		if pathItem.Options != nil {
+			requestsMap[http.MethodOptions] = append(requestsMap[http.MethodOptions], path)
+			continue
+		}
+		if pathItem.Head != nil {
+			requestsMap[http.MethodHead] = append(requestsMap[http.MethodHead], path)
+			continue
+		}
+		if pathItem.Patch != nil {
+			requestsMap[http.MethodPatch] = append(requestsMap[http.MethodPatch], path)
+			continue
+		}
+	}
+	a.mapper = newSimpleMapper(requestsMap)
 	return nil
 }
