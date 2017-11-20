@@ -24,18 +24,11 @@ func TestRequestVerifier(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestResponseVerifier(t *testing.T) {
-	verifier, err := NewResponseVerifier(testdata+sampleV2YAML, "GET", "/path")
-	assert.NoError(t, err)
-	err = verifier(nil)
-	assert.NoError(t, err)
-}
-
 func TestVerifier(t *testing.T) {
 	verifier, err := NewVerifier(testdata + sampleV2YAML)
 	assert.NoError(t, err)
 	err = verifier(httptest.NewRequest("GET", "/", nil), nil)
-	assert.NoError(t, err)
+	assert.Regexp(t, "no path template matches current request", err)
 }
 
 func TestAPIVerifier_New(t *testing.T) {

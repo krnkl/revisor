@@ -18,6 +18,7 @@ install:
 - go get -v github.com/go-openapi/loads
 - go get -v github.com/go-openapi/analysis
 - go get -v github.com/go-openapi/spec
+- go get -v github.com/go-openapi/validate
 
 
 before_script:

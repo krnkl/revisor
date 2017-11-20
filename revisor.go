@@ -5,7 +5,10 @@ import (
 	"net/http"
 
 	"github.com/go-openapi/loads"
+	"github.com/go-openapi/spec"
+	"github.com/go-openapi/strfmt"
 	"github.com/go-openapi/swag"
+	"github.com/go-openapi/validate"
 	"github.com/pkg/errors"
 )
 
@@ -28,18 +31,6 @@ func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Re
 	a, err := newAPIVerifier(definitionPath)
 	a.setOptions(options...)
 	return a.verifyRequest, err
-}
-
-// NewResponseVerifier returns a function that can be used to verify if response
-// satisfies OpenAPI definition constraints. Two perform such alidation we need
-// to specify context in which current response was received, and that is represented
-// by method and url paramters
-func NewResponseVerifier(definitionPath, method, url string, options ...option) (func(*http.Response) error, error) {
-	a, err := newAPIVerifier(definitionPath)
-	a.setOptions(options...)
-	return func(res *http.Response) error {
-		return a.verifyResponse(method, url, res)
-	}, err
 }
 
 // NewVerifier returns a function that can be used to verify both - a request
@@ -89,8 +80,35 @@ func (a *apiVerifier) verifyRequest(*http.Request) error {
 
 // verifyResponse verifies if the response is valid according to OpenAPI definition
 // and configured options
-func (a *apiVerifier) verifyResponse(method, url string, res *http.Response) error {
-	return nil
+func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) (errorParam error) {
+	pathTmpl, _, ok := a.mapper.mapRequest(req)
+	if !ok {
+		return errors.New("no path template matches current request")
+	}
+	pathDef, ok := a.doc.Spec().Paths.Paths[pathTmpl]
+	if !ok {
+		return errors.New("no matching path template found in the definition")
+	}
+	operation, err := a.operationByMethod(req.Method, &pathDef)
+	if err != nil {
+		return errors.Wrap(err, "response not valid")
+	}
+
+	jsonSchema := operation.OperationProps.Responses.Default
+	if def, ok := operation.OperationProps.Responses.StatusCodeResponses[res.StatusCode]; ok {
+		*jsonSchema = def
+	}
+	var decoded map[string]interface{}
+	err = json.NewDecoder(res.Body).Decode(&decoded)
+	if err != nil {
+		return errors.Wrap(err, "fail to read and decode response body")
+	}
+	defer func() {
+		err := res.Body.Close()
+		errorParam = err
+	}()
+
+	return validate.AgainstSchema(jsonSchema.Schema, decoded, strfmt.Default)
 }
 
 func (a *apiVerifier) verify(req *http.Request, res *http.Response) error {
@@ -98,13 +116,33 @@ func (a *apiVerifier) verify(req *http.Request, res *http.Response) error {
 	if err != nil {
 		return nil
 	}
-	return a.verifyResponse(req.Method, req.URL.Path, res)
+	return a.verifyResponse(req, res)
 }
 
 func (a *apiVerifier) setOptions(options ...option) {
 	for _, opt := range options {
 		opt(a)
 	}
+}
+
+func (a *apiVerifier) operationByMethod(method string, pathDef *spec.PathItem) (*spec.Operation, error) {
+	switch method {
+	case http.MethodGet:
+		return pathDef.Get, nil
+	case http.MethodPut:
+		return pathDef.Put, nil
+	case http.MethodPost:
+		return pathDef.Post, nil
+	case http.MethodDelete:
+		return pathDef.Delete, nil
+	case http.MethodOptions:
+		return pathDef.Options, nil
+	case http.MethodHead:
+		return pathDef.Head, nil
+	case http.MethodPatch:
+		return pathDef.Patch, nil
+	}
+	return nil, errors.New("no operation configured for method: " + method)
 }
 
 func (a *apiVerifier) initDocument(raw []byte) error {
