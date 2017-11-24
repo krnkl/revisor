@@ -93,10 +93,12 @@ func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) (err
 	if err != nil {
 		return errors.Wrap(err, "response not valid")
 	}
-
 	jsonSchema := operation.OperationProps.Responses.Default
 	if def, ok := operation.OperationProps.Responses.StatusCodeResponses[res.StatusCode]; ok {
-		*jsonSchema = def
+		jsonSchema = &def
+	}
+	if jsonSchema == nil {
+		return errors.New("neither default nor response for current status code defined")
 	}
 	var decoded map[string]interface{}
 	err = json.NewDecoder(res.Body).Decode(&decoded)
