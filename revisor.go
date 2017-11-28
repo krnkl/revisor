@@ -100,17 +100,28 @@ func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) (err
 	if jsonSchema == nil {
 		return errors.New("neither default nor response for current status code defined")
 	}
+
+	if jsonSchema.Schema == nil && res.ContentLength != -1 {
+		return errors.New("schema is not defined but response body is not empty")
+	}
+
+	if jsonSchema.Schema != nil && res.ContentLength == -1 {
+		return errors.New("schema is defined but response body is empty")
+	}
+
 	var decoded map[string]interface{}
 	err = json.NewDecoder(res.Body).Decode(&decoded)
 	if err != nil {
 		return errors.Wrap(err, "fail to read and decode response body")
 	}
 	defer func() {
-		err := res.Body.Close()
-		errorParam = err
+		err = res.Body.Close()
+		if err != nil {
+			errorParam = err
+		}
 	}()
-
-	return validate.AgainstSchema(jsonSchema.Schema, decoded, strfmt.Default)
+	errorParam = validate.AgainstSchema(jsonSchema.Schema, decoded, strfmt.Default)
+	return
 }
 
 func (a *apiVerifier) verify(req *http.Request, res *http.Response) error {
@@ -173,34 +184,26 @@ func (a *apiVerifier) initDocument(raw []byte) error {
 func (a *apiVerifier) initMapper() error {
 	requestsMap := make(map[string][]string)
 	for path, pathItem := range a.doc.Spec().Paths.Paths {
-
 		if pathItem.Get != nil {
 			requestsMap[http.MethodGet] = append(requestsMap[http.MethodGet], path)
-			continue
 		}
 		if pathItem.Put != nil {
 			requestsMap[http.MethodPut] = append(requestsMap[http.MethodPut], path)
-			continue
 		}
 		if pathItem.Post != nil {
 			requestsMap[http.MethodPost] = append(requestsMap[http.MethodPost], path)
-			continue
 		}
 		if pathItem.Delete != nil {
 			requestsMap[http.MethodDelete] = append(requestsMap[http.MethodDelete], path)
-			continue
 		}
 		if pathItem.Options != nil {
 			requestsMap[http.MethodOptions] = append(requestsMap[http.MethodOptions], path)
-			continue
 		}
 		if pathItem.Head != nil {
 			requestsMap[http.MethodHead] = append(requestsMap[http.MethodHead], path)
-			continue
 		}
 		if pathItem.Patch != nil {
 			requestsMap[http.MethodPatch] = append(requestsMap[http.MethodPatch], path)
-			continue
 		}
 	}
 	a.mapper = newSimpleMapper(requestsMap)

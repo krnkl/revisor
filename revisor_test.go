@@ -1,6 +1,7 @@
 package revisor
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -79,4 +80,129 @@ func TestAPIVerifier_New(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, a)
 	})
+}
+
+type TestUser struct {
+	ID              int64  `json:"id,omitempty"`
+	Username        string `json:"username,omitempty"`
+	FirstName       string `json:"firstname,omitempty"`
+	LastName        string `json:"lastname,omitempty"`
+	Email           string `json:"email,omitempty"`
+	Password        string `json:"password,omitempty"`
+	Phone           string `json:"phone,omitempty"`
+	UserStatus      int32  `json:"user_status,omitempty"`
+	AdditionalField string `json:"additional_field,omitempty"`
+}
+
+func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
+
+	a, err := newAPIVerifier(testdata + sampleV2YAML)
+	require.NoError(t, err)
+	require.NotNil(t, a)
+
+	validUser := func() TestUser {
+		return TestUser{
+			// Immutable
+			ID:       123456,
+			Username: "test-user",
+			Email:    "test-user@example.com",
+			// Mutable
+			LastName:   "Bar",
+			Password:   "supersecret",
+			Phone:      "+12 (34) 5678 910",
+			UserStatus: 1,
+		}
+
+	}
+	tests := []struct {
+		name  string
+		req   *http.Request
+		code  int
+		err   string
+		alter func(*TestUser) interface{}
+	}{
+		{
+			"valid response",
+			httptest.NewRequest("GET", "/user/testuser", nil),
+			http.StatusOK,
+			"",
+			func(u *TestUser) interface{} { return u },
+		},
+		{
+			"validates default",
+			httptest.NewRequest("GET", "/user/testuser", nil),
+			http.StatusInternalServerError,
+			"",
+			func(u *TestUser) interface{} {
+				return json.RawMessage(`{"error":"internal error","error_description":"error"}`)
+			},
+		},
+		{
+			"no schema configured",
+			httptest.NewRequest("PUT", "/user/testuser", nil),
+			http.StatusPermanentRedirect,
+			"neither default nor response for current status code defined",
+			func(u *TestUser) interface{} { return u },
+		},
+		{
+			"no path template found",
+			httptest.NewRequest("GET", "/not-found", nil),
+			http.StatusNotFound,
+			"no path template matches current request",
+			func(u *TestUser) interface{} { return u },
+		},
+		{
+			"schema is not defined but response body is not empty",
+			httptest.NewRequest("GET", "/user/testuser", nil),
+			http.StatusNotFound,
+			"schema is not defined but response body is not empty",
+			func(u *TestUser) interface{} { return json.RawMessage("{}") },
+		},
+		{
+			"schema defined but response body is empty",
+			httptest.NewRequest("GET", "/user/testuser", nil),
+			http.StatusOK,
+			"schema is defined but response body is empty",
+			func(u *TestUser) interface{} { return "" },
+		},
+		{
+			"missing required field",
+			httptest.NewRequest("GET", "/user/testuser", nil),
+			http.StatusOK,
+			".id in body is required",
+			func(u *TestUser) interface{} { u.ID = 0; return u },
+		},
+		{
+			"type incorrect",
+			httptest.NewRequest("GET", "/user/testuser", nil),
+			http.StatusOK,
+			"firstname in body must be of type integer",
+			func(u *TestUser) interface{} { u.FirstName = "firstname"; return u },
+		},
+		{
+			"format incorrect",
+			httptest.NewRequest("GET", "/user/testuser", nil),
+			http.StatusOK,
+			"email in body must be of type email",
+			func(u *TestUser) interface{} { u.Email = "invalid-email"; return u },
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+
+			rec := httptest.NewRecorder()
+			rec.WriteHeader(test.code)
+			respStruct := validUser()
+
+			serialized, err := json.Marshal(test.alter(&respStruct))
+			assert.NoError(t, err)
+			rec.Write(serialized)
+			err = a.verifyResponse(test.req, rec.Result())
+			if test.err != "" {
+				assert.Regexp(t, test.err, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }

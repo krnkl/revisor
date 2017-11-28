@@ -527,6 +527,8 @@ paths:
           description: Invalid username supplied
         '404':
           description: User not found
+        default:
+          $ref: '#/definitions/Error'
     put:
       tags:
         - user
@@ -623,30 +625,55 @@ definitions:
         type: string
     xml:
       name: Category
+
+  Error:
+    description: An error response
+    schema:
+      type: object
+      properties:
+        type:
+          error: string
+        error_description:
+          type: string
+      required:
+      - error
+      - error_description
+
   User:
     type: object
+    allOf:
+    - $ref: '#/definitions/UserImmutable'
+    - $ref: '#/definitions/UserMutable'
+
+  UserImmutable:
+    type: object
+    required:
+      - id
     properties:
       id:
         type: integer
         format: int64
       username:
         type: string
-      firstName:
-        type: string
-      lastName:
-        type: string
       email:
+        type: string
+        format: email
+
+  UserMutable:
+    type: object
+    properties:
+      lastname:
         type: string
       password:
         type: string
+      firstname:
+        type: integer
       phone:
         type: string
-      userStatus:
+      user_status:
         type: integer
         format: int32
-        description: User Status
-    xml:
-      name: User
+
   Tag:
     type: object
     properties:
