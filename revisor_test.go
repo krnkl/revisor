@@ -22,7 +22,7 @@ var (
 func TestRequestVerifier(t *testing.T) {
 	verifier, err := NewRequestVerifier(testdata + sampleV2YAML)
 	assert.NoError(t, err)
-	err = verifier(nil)
+	err = verifier(httptest.NewRequest("GET", "/user/testuser", nil))
 	assert.NoError(t, err)
 }
 

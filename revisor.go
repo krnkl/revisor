@@ -2,6 +2,7 @@ package revisor
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/go-openapi/loads"
@@ -74,17 +75,30 @@ type apiVerifier struct {
 
 // verifyRequest verifies if request is valid according to OpenAPI definition
 // and configured options
-func (a *apiVerifier) verifyRequest(*http.Request) error {
-	return nil
+func (a *apiVerifier) verifyRequest(req *http.Request) error {
+	requestDef, err := a.getRequestDef(req)
+	if err != nil {
+		return err
+	}
+	// err = checkIfSchemeOrRequestIsEmpty(requestDef, req)
+	// if err != nil {
+	// 	return err
+	// }
+
+	decoded, err := decodeBody(req.Body)
+	if err != nil {
+		return errors.Wrap(err, "failed to decode request")
+	}
+	return validate.AgainstSchema(requestDef.Schema, decoded, strfmt.Default)
+
 }
 
 // verifyResponse verifies if the response is valid according to OpenAPI definition
 // and configured options
-func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) (errorParam error) {
+func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) error {
 	response, err := a.getResponseDef(req, res)
 	if err != nil {
-		errorParam = err
-		return
+		return err
 	}
 
 	err = checkIfSchemaOrResponseEmpty(response.Schema, res)
@@ -92,22 +106,28 @@ func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) (err
 		return errors.Wrap(err, "either defined schema or response body is empty")
 	}
 
-	var decoded map[string]interface{}
-	err = json.NewDecoder(res.Body).Decode(&decoded)
+	decoded, err := decodeBody(res.Body)
 	if err != nil {
-		return errors.Wrap(err, "failed to read and decode response body")
+		return errors.Wrap(err, "failed to decode response")
 	}
-	defer func() {
-		err = res.Body.Close()
-		if err != nil {
-			errorParam = err
-		}
-	}()
-	errorParam = validate.AgainstSchema(response.Schema, decoded, strfmt.Default)
-	return
+	return validate.AgainstSchema(response.Schema, decoded, strfmt.Default)
 }
 
-func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*spec.Response, error) {
+func (a *apiVerifier) getRequestDef(req *http.Request) (*spec.Parameter, error) {
+	pathDef, err := a.getPathDef(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get pathItem defintiion")
+	}
+	for _, parameter := range pathDef.Parameters {
+		if parameter.In == "body" {
+			return &parameter, nil
+		}
+	}
+	return nil, nil
+}
+
+func (a *apiVerifier) getPathDef(req *http.Request) (*spec.PathItem, error) {
+
 	pathTmpl, _, ok := a.mapper.mapRequest(req)
 	if !ok {
 		return nil, errors.New("no path template matches current request")
@@ -116,7 +136,16 @@ func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*sp
 	if !ok {
 		return nil, errors.New("no matching path template found in the definition")
 	}
-	response, err := a.responseByMethodAndStatus(req.Method, res.StatusCode, &pathDef)
+	return &pathDef, nil
+}
+
+func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*spec.Response, error) {
+
+	pathDef, err := a.getPathDef(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get pathItem defintiion")
+	}
+	response, err := a.responseByMethodAndStatus(req.Method, res.StatusCode, pathDef)
 	if err != nil {
 		return nil, errors.Wrap(err, "response not valid")
 	}
@@ -135,11 +164,17 @@ func checkIfSchemaOrResponseEmpty(schema *spec.Schema, res *http.Response) error
 }
 
 func (a *apiVerifier) verify(req *http.Request, res *http.Response) error {
+	var report error
 	err := a.verifyRequest(req)
 	if err != nil {
-		return nil
+		report = errors.Wrap(err, "request validation failed")
 	}
-	return a.verifyResponse(req, res)
+
+	err = a.verifyResponse(req, res)
+	if err != nil {
+		report = errors.Wrap(err, "response validation failed")
+	}
+	return report
 }
 
 func (a *apiVerifier) setOptions(options ...option) {
@@ -237,4 +272,19 @@ func (a *apiVerifier) initMapper() error {
 	}
 	a.mapper = newSimpleMapper(requestsMap)
 	return nil
+}
+
+func decodeBody(r io.ReadCloser) (decoded interface{}, errorParam error) {
+
+	err := json.NewDecoder(r).Decode(&decoded)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read and decode")
+	}
+	defer func() {
+		err = r.Close()
+		if err != nil {
+			errorParam = err
+		}
+	}()
+	return
 }
