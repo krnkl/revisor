@@ -40,9 +40,6 @@ func TestVerifier(t *testing.T) {
 
 func TestAPIVerifier_New(t *testing.T) {
 
-	// http.HandleFunc("/swagger.yaml", func(w http.ResponseWriter, r *http.Request) {
-	// 	http.ServeFile(w, r, sampleV2)
-	// })
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	go func() { err = http.Serve(listener, http.FileServer(http.Dir("internal/testdata"))) }()
@@ -89,16 +86,4 @@ func TestAPIVerifier_New(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, a)
 	})
-	//
-	// t.Run("url not found", func(t *testing.T) {
-	// 	b, err := loadDefinition(fmt.Sprintf("http://%s/not-existing-path.yaml", listener.Addr()))
-	// 	assert.Regexp(t, "request return error: Not Found", err)
-	// 	assert.Nil(t, b)
-	// })
-	//
-	// t.Run("url not valid", func(t *testing.T) {
-	// 	b, err := loadDefinition("localhost:8080/swagger.yaml")
-	// 	assert.Regexp(t, "failed to perform request: Get localhost:8080/swagger.yaml", err)
-	// 	assert.Nil(t, b)
-	// })
 }
