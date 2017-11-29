@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,8 +101,8 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, a)
 
-	validUser := func() TestUser {
-		return TestUser{
+	validUser := func() *TestUser {
+		return &TestUser{
 			// Immutable
 			ID:       123456,
 			Username: "test-user",
@@ -141,7 +142,7 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			"no schema configured",
 			httptest.NewRequest("PUT", "/user/testuser", nil),
 			http.StatusPermanentRedirect,
-			"neither default nor response for current status code defined",
+			"neither default nor response schema for current status code is defined",
 			func(u *TestUser) interface{} { return u },
 		},
 		{
@@ -152,18 +153,32 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			func(u *TestUser) interface{} { return u },
 		},
 		{
+			"no schema for http method",
+			httptest.NewRequest("HEAD", "/user/testuser", nil),
+			http.StatusMethodNotAllowed,
+			"no path template matches current request",
+			func(u *TestUser) interface{} { return u },
+		},
+		{
 			"schema is not defined but response body is not empty",
 			httptest.NewRequest("GET", "/user/testuser", nil),
 			http.StatusNotFound,
-			"schema is not defined but response body is not empty",
+			"schema is not defined",
 			func(u *TestUser) interface{} { return json.RawMessage("{}") },
 		},
 		{
 			"schema defined but response body is empty",
 			httptest.NewRequest("GET", "/user/testuser", nil),
 			http.StatusOK,
-			"schema is defined but response body is empty",
-			func(u *TestUser) interface{} { return "" },
+			"response body is empty",
+			func(u *TestUser) interface{} { return nil },
+		},
+		{
+			"fails to decode response body",
+			httptest.NewRequest("GET", "/user/testuser", nil),
+			http.StatusOK,
+			"failed to read and decode response body",
+			func(u *TestUser) interface{} { return "invalid-json" },
 		},
 		{
 			"missing required field",
@@ -191,13 +206,19 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 
 			rec := httptest.NewRecorder()
-			rec.WriteHeader(test.code)
-			respStruct := validUser()
 
-			serialized, err := json.Marshal(test.alter(&respStruct))
+			serialized, err := json.Marshal(test.alter(validUser()))
 			assert.NoError(t, err)
-			rec.Write(serialized)
-			err = a.verifyResponse(test.req, rec.Result())
+			if string(serialized) != "null" {
+				rec.Header().Add("Content-Length", strconv.Itoa(len(serialized)))
+				rec.WriteHeader(test.code)
+				rec.Write(serialized)
+			} else {
+				rec.WriteHeader(test.code)
+			}
+			res := rec.Result()
+			err = a.verifyResponse(test.req, res)
+
 			if test.err != "" {
 				assert.Regexp(t, test.err, err)
 			} else {

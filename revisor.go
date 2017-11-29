@@ -81,38 +81,21 @@ func (a *apiVerifier) verifyRequest(*http.Request) error {
 // verifyResponse verifies if the response is valid according to OpenAPI definition
 // and configured options
 func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) (errorParam error) {
-	pathTmpl, _, ok := a.mapper.mapRequest(req)
-	if !ok {
-		return errors.New("no path template matches current request")
-	}
-	pathDef, ok := a.doc.Spec().Paths.Paths[pathTmpl]
-	if !ok {
-		return errors.New("no matching path template found in the definition")
-	}
-	operation, err := a.operationByMethod(req.Method, &pathDef)
+	response, err := a.getResponseDef(req, res)
 	if err != nil {
-		return errors.Wrap(err, "response not valid")
-	}
-	jsonSchema := operation.OperationProps.Responses.Default
-	if def, ok := operation.OperationProps.Responses.StatusCodeResponses[res.StatusCode]; ok {
-		jsonSchema = &def
-	}
-	if jsonSchema == nil {
-		return errors.New("neither default nor response for current status code defined")
+		errorParam = err
+		return
 	}
 
-	if jsonSchema.Schema == nil && res.ContentLength != -1 {
-		return errors.New("schema is not defined but response body is not empty")
-	}
-
-	if jsonSchema.Schema != nil && res.ContentLength == -1 {
-		return errors.New("schema is defined but response body is empty")
+	err = checkIfSchemaOrResponseEmpty(response.Schema, res)
+	if err != nil {
+		return errors.Wrap(err, "either defined schema or response body is empty")
 	}
 
 	var decoded map[string]interface{}
 	err = json.NewDecoder(res.Body).Decode(&decoded)
 	if err != nil {
-		return errors.Wrap(err, "fail to read and decode response body")
+		return errors.Wrap(err, "failed to read and decode response body")
 	}
 	defer func() {
 		err = res.Body.Close()
@@ -120,8 +103,35 @@ func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) (err
 			errorParam = err
 		}
 	}()
-	errorParam = validate.AgainstSchema(jsonSchema.Schema, decoded, strfmt.Default)
+	errorParam = validate.AgainstSchema(response.Schema, decoded, strfmt.Default)
 	return
+}
+
+func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*spec.Response, error) {
+	pathTmpl, _, ok := a.mapper.mapRequest(req)
+	if !ok {
+		return nil, errors.New("no path template matches current request")
+	}
+	pathDef, ok := a.doc.Spec().Paths.Paths[pathTmpl]
+	if !ok {
+		return nil, errors.New("no matching path template found in the definition")
+	}
+	response, err := a.responseByMethodAndStatus(req.Method, res.StatusCode, &pathDef)
+	if err != nil {
+		return nil, errors.Wrap(err, "response not valid")
+	}
+	return response, nil
+}
+
+func checkIfSchemaOrResponseEmpty(schema *spec.Schema, res *http.Response) error {
+	if schema == nil && (res.ContentLength != -1 && res.ContentLength != 0) {
+		return errors.New("schema is not defined")
+	}
+
+	if schema != nil && (res.ContentLength == -1 || res.ContentLength == 0) {
+		return errors.New("response body is empty")
+	}
+	return nil
 }
 
 func (a *apiVerifier) verify(req *http.Request, res *http.Response) error {
@@ -138,24 +148,35 @@ func (a *apiVerifier) setOptions(options ...option) {
 	}
 }
 
-func (a *apiVerifier) operationByMethod(method string, pathDef *spec.PathItem) (*spec.Operation, error) {
+func (a *apiVerifier) responseByMethodAndStatus(method string, status int, pathDef *spec.PathItem) (*spec.Response, error) {
+	var operation *spec.Operation = nil
 	switch method {
 	case http.MethodGet:
-		return pathDef.Get, nil
+		operation = pathDef.Get
 	case http.MethodPut:
-		return pathDef.Put, nil
+		operation = pathDef.Put
 	case http.MethodPost:
-		return pathDef.Post, nil
+		operation = pathDef.Post
 	case http.MethodDelete:
-		return pathDef.Delete, nil
+		operation = pathDef.Delete
 	case http.MethodOptions:
-		return pathDef.Options, nil
+		operation = pathDef.Options
 	case http.MethodHead:
-		return pathDef.Head, nil
+		operation = pathDef.Head
 	case http.MethodPatch:
-		return pathDef.Patch, nil
+		operation = pathDef.Patch
 	}
-	return nil, errors.New("no operation configured for method: " + method)
+	if operation == nil {
+		return nil, errors.New("no operation configured for method: " + method)
+	}
+	response := operation.OperationProps.Responses.Default
+	if def, ok := operation.OperationProps.Responses.StatusCodeResponses[status]; ok {
+		response = &def
+	}
+	if response == nil {
+		return nil, errors.New("neither default nor response schema for current status code is defined")
+	}
+	return response, nil
 }
 
 func (a *apiVerifier) initDocument(raw []byte) error {
