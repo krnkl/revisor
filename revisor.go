@@ -149,7 +149,22 @@ func (a *apiVerifier) setOptions(options ...option) {
 }
 
 func (a *apiVerifier) responseByMethodAndStatus(method string, status int, pathDef *spec.PathItem) (*spec.Response, error) {
-	var operation *spec.Operation = nil
+	operation, err := a.operationByMethod(method, pathDef)
+	if err != nil {
+		return nil, errors.Wrap(err, "response definition not configured")
+	}
+	response := operation.OperationProps.Responses.Default
+	if def, ok := operation.OperationProps.Responses.StatusCodeResponses[status]; ok {
+		response = &def
+	}
+	if response == nil {
+		return nil, errors.New("neither default nor response schema for current status code is defined")
+	}
+	return response, nil
+}
+
+func (a *apiVerifier) operationByMethod(method string, pathDef *spec.PathItem) (*spec.Operation, error) {
+	var operation *spec.Operation
 	switch method {
 	case http.MethodGet:
 		operation = pathDef.Get
@@ -169,14 +184,7 @@ func (a *apiVerifier) responseByMethodAndStatus(method string, status int, pathD
 	if operation == nil {
 		return nil, errors.New("no operation configured for method: " + method)
 	}
-	response := operation.OperationProps.Responses.Default
-	if def, ok := operation.OperationProps.Responses.StatusCodeResponses[status]; ok {
-		response = &def
-	}
-	if response == nil {
-		return nil, errors.New("neither default nor response schema for current status code is defined")
-	}
-	return response, nil
+	return operation, nil
 }
 
 func (a *apiVerifier) initDocument(raw []byte) error {

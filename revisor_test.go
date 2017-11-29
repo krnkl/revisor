@@ -212,7 +212,8 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			if string(serialized) != "null" {
 				rec.Header().Add("Content-Length", strconv.Itoa(len(serialized)))
 				rec.WriteHeader(test.code)
-				rec.Write(serialized)
+				_, err = rec.Write(serialized)
+				assert.NoError(t, err)
 			} else {
 				rec.WriteHeader(test.code)
 			}
