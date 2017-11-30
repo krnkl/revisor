@@ -2,6 +2,7 @@ package revisor
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -80,10 +81,10 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 	if err != nil {
 		return err
 	}
-	// err = checkIfSchemeOrRequestIsEmpty(requestDef, req)
-	// if err != nil {
-	// 	return err
-	// }
+	err = checkIfSchemaOrBodyIsEmpty(requestDef.Schema, req.ContentLength)
+	if err != nil {
+		return errors.Wrap(err, "either defined schema or request body is empty")
+	}
 
 	decoded, err := decodeBody(req.Body)
 	if err != nil {
@@ -101,7 +102,7 @@ func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) erro
 		return err
 	}
 
-	err = checkIfSchemaOrResponseEmpty(response.Schema, res)
+	err = checkIfSchemaOrBodyIsEmpty(response.Schema, res.ContentLength)
 	if err != nil {
 		return errors.Wrap(err, "either defined schema or response body is empty")
 	}
@@ -118,7 +119,8 @@ func (a *apiVerifier) getRequestDef(req *http.Request) (*spec.Parameter, error) 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get pathItem defintiion")
 	}
-	for _, parameter := range pathDef.Parameters {
+	fmt.Printf("%+v\n", pathDef.Parameters)
+	for _, parameter := range pathDef.Put.Parameters {
 		if parameter.In == "body" {
 			return &parameter, nil
 		}
@@ -152,13 +154,14 @@ func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*sp
 	return response, nil
 }
 
-func checkIfSchemaOrResponseEmpty(schema *spec.Schema, res *http.Response) error {
-	if schema == nil && (res.ContentLength != -1 && res.ContentLength != 0) {
+// checkIfSchemaOrBodyIsEmpty accepts Schema definition and length
+// of either request or response body
+func checkIfSchemaOrBodyIsEmpty(schema *spec.Schema, contentLen int64) error {
+	if schema == nil && (contentLen != -1 && contentLen != 0) {
 		return errors.New("schema is not defined")
 	}
-
-	if schema != nil && (res.ContentLength == -1 || res.ContentLength == 0) {
-		return errors.New("response body is empty")
+	if schema != nil && (contentLen == -1 || contentLen == 0) {
+		return errors.New("body is empty")
 	}
 	return nil
 }

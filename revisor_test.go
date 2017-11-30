@@ -23,7 +23,7 @@ func TestRequestVerifier(t *testing.T) {
 	verifier, err := NewRequestVerifier(testdata + sampleV2YAML)
 	assert.NoError(t, err)
 	err = verifier(httptest.NewRequest("GET", "/user/testuser", nil))
-	assert.NoError(t, err)
+	assert.Regexp(t, "body is empty", err)
 }
 
 func TestVerifier(t *testing.T) {
@@ -164,21 +164,7 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			httptest.NewRequest("GET", "/user/testuser", nil),
 			http.StatusNotFound,
 			"schema is not defined",
-			func(u *TestUser) interface{} { return json.RawMessage("{}") },
-		},
-		{
-			"schema defined but response body is empty",
-			httptest.NewRequest("GET", "/user/testuser", nil),
-			http.StatusOK,
-			"response body is empty",
-			func(u *TestUser) interface{} { return nil },
-		},
-		{
-			"fails to decode response body",
-			httptest.NewRequest("GET", "/user/testuser", nil),
-			http.StatusOK,
-			"failed to read and decode response body",
-			func(u *TestUser) interface{} { return "invalid-json" },
+			func(u *TestUser) interface{} { return u },
 		},
 		{
 			"missing required field",
@@ -204,21 +190,15 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-
 			rec := httptest.NewRecorder()
-
 			serialized, err := json.Marshal(test.alter(validUser()))
 			assert.NoError(t, err)
-			if string(serialized) != "null" {
-				rec.Header().Add("Content-Length", strconv.Itoa(len(serialized)))
-				rec.WriteHeader(test.code)
-				_, err = rec.Write(serialized)
-				assert.NoError(t, err)
-			} else {
-				rec.WriteHeader(test.code)
-			}
-			res := rec.Result()
-			err = a.verifyResponse(test.req, res)
+
+			rec.Header().Add("Content-Length", strconv.Itoa(len(serialized)))
+			rec.WriteHeader(test.code)
+			_, err = rec.Write(serialized)
+			assert.NoError(t, err)
+			err = a.verifyResponse(test.req, rec.Result())
 
 			if test.err != "" {
 				assert.Regexp(t, test.err, err)
@@ -227,4 +207,21 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			}
 		})
 	}
+	t.Run("schema defined but response body is empty", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		rec.WriteHeader(http.StatusOK)
+		err = a.verifyResponse(httptest.NewRequest("GET", "/user/testuser", nil), rec.Result())
+		assert.Regexp(t, "response body is empty", err)
+	})
+	t.Run("fails to decode response body", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		invalid := []byte("invalid-json")
+		rec.Header().Add("Content-Length", strconv.Itoa(len(invalid)))
+		rec.WriteHeader(http.StatusOK)
+		_, err = rec.Write(invalid)
+		assert.NoError(t, err)
+
+		err = a.verifyResponse(httptest.NewRequest("GET", "/user/testuser", nil), rec.Result())
+		assert.Regexp(t, "failed to decode response", err)
+	})
 }

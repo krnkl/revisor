@@ -519,16 +519,14 @@ paths:
           required: true
           type: string
       responses:
-        '200':
-          description: successful operation
-          schema:
-            $ref: '#/definitions/User'
-        '400':
+        200:
+          $ref: '#/responses/User'
+        400:
           description: Invalid username supplied
-        '404':
+        404:
           description: User not found
         default:
-          $ref: '#/definitions/Error'
+          $ref: '#/responses/Error'
     put:
       tags:
         - user
@@ -628,16 +626,15 @@ definitions:
 
   Error:
     description: An error response
-    schema:
-      type: object
-      properties:
-        type:
-          error: string
-        error_description:
-          type: string
-      required:
-      - error
-      - error_description
+    type: object
+    properties:
+      error:
+        type: string
+      error_description:
+        type: string
+    required:
+    - error
+    - error_description
 
   User:
     type: object
@@ -734,3 +731,14 @@ definitions:
 externalDocs:
   description: Find out more about Swagger
   url: 'http://swagger.io'
+
+
+responses:
+  User:
+    description: Object that contains status information.
+    schema:
+      $ref: '#/definitions/User'
+  Error:
+    description: Object that contains status information.
+    schema:
+      $ref: '#/definitions/Error'
