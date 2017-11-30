@@ -2,7 +2,6 @@ package revisor
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 
@@ -40,7 +39,7 @@ func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Re
 func NewVerifier(definitionPath string, options ...option) (func(*http.Request, *http.Response) error, error) {
 	a, err := newAPIVerifier(definitionPath)
 	a.setOptions(options...)
-	return a.verify, err
+	return a.verifyRequestAndReponse, err
 }
 
 func newAPIVerifier(definitionPath string) (*apiVerifier, error) {
@@ -81,6 +80,7 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 	if err != nil {
 		return err
 	}
+	// TODO: check if param is required
 	err = checkIfSchemaOrBodyIsEmpty(requestDef.Schema, req.ContentLength)
 	if err != nil {
 		return errors.Wrap(err, "either defined schema or request body is empty")
@@ -114,18 +114,36 @@ func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) erro
 	return validate.AgainstSchema(response.Schema, decoded, strfmt.Default)
 }
 
+// getRequestDef checks parameters defined on both Path and Operation components
+// returns an error if no body parameters were found
 func (a *apiVerifier) getRequestDef(req *http.Request) (*spec.Parameter, error) {
 	pathDef, err := a.getPathDef(req)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get pathItem defintiion")
 	}
-	fmt.Printf("%+v\n", pathDef.Parameters)
-	for _, parameter := range pathDef.Put.Parameters {
+	operation, err := a.operationByMethod(req.Method, pathDef)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get operation defintiion")
+	}
+	reqBodyParameter := getBodyParameter(operation.Parameters)
+	if reqBodyParameter == nil {
+		reqBodyParameter = getBodyParameter(pathDef.Parameters)
+	}
+	if reqBodyParameter == nil {
+		return nil, errors.New("no body parameter definition found")
+	}
+	return reqBodyParameter, nil
+}
+
+// getBodyParameter filters parameter of type body from list of parameters
+// it returns first occurence of such parameter
+func getBodyParameter(params []spec.Parameter) *spec.Parameter {
+	for _, parameter := range params {
 		if parameter.In == "body" {
-			return &parameter, nil
+			return &parameter
 		}
 	}
-	return nil, nil
+	return nil
 }
 
 func (a *apiVerifier) getPathDef(req *http.Request) (*spec.PathItem, error) {
@@ -136,7 +154,7 @@ func (a *apiVerifier) getPathDef(req *http.Request) (*spec.PathItem, error) {
 	}
 	pathDef, ok := a.doc.Spec().Paths.Paths[pathTmpl]
 	if !ok {
-		return nil, errors.New("no matching path template found in the definition")
+		return nil, errors.New("no path item definition found for path template")
 	}
 	return &pathDef, nil
 }
@@ -145,7 +163,7 @@ func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*sp
 
 	pathDef, err := a.getPathDef(req)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get pathItem defintiion")
+		return nil, errors.Wrap(err, "failed to get path item defintiion")
 	}
 	response, err := a.responseByMethodAndStatus(req.Method, res.StatusCode, pathDef)
 	if err != nil {
@@ -166,13 +184,13 @@ func checkIfSchemaOrBodyIsEmpty(schema *spec.Schema, contentLen int64) error {
 	return nil
 }
 
-func (a *apiVerifier) verify(req *http.Request, res *http.Response) error {
+func (a *apiVerifier) verifyRequestAndReponse(req *http.Request, res *http.Response) error {
 	var report error
 	err := a.verifyRequest(req)
 	if err != nil {
 		report = errors.Wrap(err, "request validation failed")
 	}
-
+	// TODO: check if request has errors but reponse is successful
 	err = a.verifyResponse(req, res)
 	if err != nil {
 		report = errors.Wrap(err, "response validation failed")
