@@ -27,7 +27,7 @@ before_script:
 
 script:
 - go vet -v
-- gometalinter --exclude="which can be annoying to use" .
+- gometalinter --config=.gometalinter.json
 - go test -v -covermode=count -coverprofile=profile.cov .
 
 after_success:

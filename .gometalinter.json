@@ -1,0 +1,6 @@
+{
+    "Exclude": [
+        "which can be annoying to use",
+        "declaration of \"err\" shadows declaration"
+    ]
+}
