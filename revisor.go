@@ -38,6 +38,9 @@ func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Re
 // and the response made in the context of the request
 func NewVerifier(definitionPath string, options ...option) (func(*http.Response, *http.Request) error, error) {
 	a, err := newAPIVerifier(definitionPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create versifier")
+	}
 	a.setOptions(options...)
 	return a.verifyRequestAndReponse, err
 }
@@ -189,8 +192,11 @@ func (a *apiVerifier) verifyRequestAndReponse(res *http.Response, req *http.Requ
 	err := a.verifyRequest(req)
 	if err != nil {
 		report = errors.Wrap(err, "request validation failed")
+		if res != nil && res.StatusCode < 400 {
+			report = errors.Wrap(err, "request validation faild but response status code is ok")
+		}
 	}
-	// TODO: check if request has errors but reponse is successful
+
 	err = a.verifyResponse(res, req)
 	if err != nil {
 		report = errors.Wrap(err, "response validation failed")
