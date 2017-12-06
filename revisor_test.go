@@ -3,7 +3,6 @@ package revisor
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -71,17 +70,17 @@ func TestAPIVerifier_New(t *testing.T) {
 		assert.Nil(t, a)
 	})
 
-	t.Run("success loading yaml by URL", func(t *testing.T) {
-		a, err := newAPIVerifier(fmt.Sprintf("http://%s/%s", listener.Addr(), sampleV2YAML))
-		assert.NoError(t, err)
-		assert.NotNil(t, a)
-	})
-
-	t.Run("success loading json by URL", func(t *testing.T) {
-		a, err := newAPIVerifier(fmt.Sprintf("http://%s/%s", listener.Addr(), sampleV2JSON))
-		assert.NoError(t, err)
-		assert.NotNil(t, a)
-	})
+	// t.Run("success loading yaml by URL", func(t *testing.T) {
+	// 	a, err := newAPIVerifier(fmt.Sprintf("http://%s/%s", listener.Addr(), sampleV2YAML))
+	// 	assert.NoError(t, err)
+	// 	assert.NotNil(t, a)
+	// })
+	//
+	// t.Run("success loading json by URL", func(t *testing.T) {
+	// 	a, err := newAPIVerifier(fmt.Sprintf("http://%s/%s", listener.Addr(), sampleV2JSON))
+	// 	assert.NoError(t, err)
+	// 	assert.NotNil(t, a)
+	// })
 }
 
 type TestUser struct {

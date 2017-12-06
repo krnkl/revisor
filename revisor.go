@@ -38,9 +38,6 @@ func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Re
 // and the response made in the context of the request
 func NewVerifier(definitionPath string, options ...option) (func(*http.Response, *http.Request) error, error) {
 	a, err := newAPIVerifier(definitionPath)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create versifier")
-	}
 	a.setOptions(options...)
 	return a.verifyRequestAndReponse, err
 }
@@ -265,7 +262,7 @@ func (a *apiVerifier) initDocument(raw []byte) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to load swagger spec")
 	}
-	a.doc, err = doc.Expanded(nil)
+	a.doc, err = doc.Expanded(&spec.ExpandOptions{RelativeBase: a.definitionPath})
 	if err != nil {
 		return errors.Wrap(err, "failed to expand document")
 	}

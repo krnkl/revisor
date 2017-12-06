@@ -585,7 +585,7 @@ securityDefinitions:
     type: apiKey
     name: api_key
     in: header
-    
+
 definitions:
   Order:
     type: object
@@ -729,6 +729,7 @@ definitions:
         type: string
       message:
         type: string
+
 externalDocs:
   description: Find out more about Swagger
   url: 'http://swagger.io'
