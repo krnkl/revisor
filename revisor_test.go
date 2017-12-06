@@ -30,7 +30,7 @@ func TestRequestVerifier(t *testing.T) {
 func TestVerifier(t *testing.T) {
 	verifier, err := NewVerifier(testdata + sampleV2YAML)
 	assert.NoError(t, err)
-	err = verifier(httptest.NewRequest("GET", "/", nil), nil)
+	err = verifier(nil, httptest.NewRequest("GET", "/", nil))
 	assert.Regexp(t, "no path template matches current request", err)
 }
 
@@ -199,7 +199,7 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			rec.WriteHeader(test.code)
 			_, err = rec.Write(serialized)
 			assert.NoError(t, err)
-			err = a.verifyResponse(test.req, rec.Result())
+			err = a.verifyResponse(rec.Result(), test.req)
 
 			if test.err != "" {
 				assert.Regexp(t, test.err, err)
@@ -211,7 +211,7 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 	t.Run("schema defined but response body is empty", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		rec.WriteHeader(http.StatusOK)
-		err = a.verifyResponse(httptest.NewRequest("GET", "/user/testuser", nil), rec.Result())
+		err = a.verifyResponse(rec.Result(), httptest.NewRequest("GET", "/user/testuser", nil))
 		assert.Regexp(t, "response body is empty", err)
 	})
 	t.Run("fails to decode response body", func(t *testing.T) {
@@ -222,7 +222,7 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 		_, err = rec.Write(invalid)
 		assert.NoError(t, err)
 
-		err = a.verifyResponse(httptest.NewRequest("GET", "/user/testuser", nil), rec.Result())
+		err = a.verifyResponse(rec.Result(), httptest.NewRequest("GET", "/user/testuser", nil))
 		assert.Regexp(t, "failed to decode response", err)
 	})
 }
@@ -275,9 +275,27 @@ func TestAPIVerifierV2_VerifyRequest(t *testing.T) {
 			"no body parameter definition found",
 			func(u *TestUser) interface{} { return nil },
 		},
-		// TODO: add missing required field
-		// type incorrect
-		// format incorrect
+		{
+			"missing required field",
+			"PUT",
+			"/user/testuser",
+			".id in body is required",
+			func(u *TestUser) interface{} { u.ID = 0; return u },
+		},
+		{
+			"type incorrect",
+			"PUT",
+			"/user/testuser",
+			"firstname in body must be of type integer",
+			func(u *TestUser) interface{} { u.FirstName = "firstname"; return u },
+		},
+		{
+			"format incorrect",
+			"PUT",
+			"/user/testuser",
+			"email in body must be of type email",
+			func(u *TestUser) interface{} { u.Email = "invalid-email"; return u },
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

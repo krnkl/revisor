@@ -36,7 +36,7 @@ func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Re
 
 // NewVerifier returns a function that can be used to verify both - a request
 // and the response made in the context of the request
-func NewVerifier(definitionPath string, options ...option) (func(*http.Request, *http.Response) error, error) {
+func NewVerifier(definitionPath string, options ...option) (func(*http.Response, *http.Request) error, error) {
 	a, err := newAPIVerifier(definitionPath)
 	a.setOptions(options...)
 	return a.verifyRequestAndReponse, err
@@ -96,7 +96,7 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 
 // verifyResponse verifies if the response is valid according to OpenAPI definition
 // and configured options
-func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) error {
+func (a *apiVerifier) verifyResponse(res *http.Response, req *http.Request) error {
 	response, err := a.getResponseDef(req, res)
 	if err != nil {
 		return err
@@ -184,14 +184,14 @@ func checkIfSchemaOrBodyIsEmpty(schema *spec.Schema, contentLen int64) error {
 	return nil
 }
 
-func (a *apiVerifier) verifyRequestAndReponse(req *http.Request, res *http.Response) error {
+func (a *apiVerifier) verifyRequestAndReponse(res *http.Response, req *http.Request) error {
 	var report error
 	err := a.verifyRequest(req)
 	if err != nil {
 		report = errors.Wrap(err, "request validation failed")
 	}
 	// TODO: check if request has errors but reponse is successful
-	err = a.verifyResponse(req, res)
+	err = a.verifyResponse(res, req)
 	if err != nil {
 		report = errors.Wrap(err, "response validation failed")
 	}
