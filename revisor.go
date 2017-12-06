@@ -5,7 +5,10 @@ import (
 	"net/http"
 
 	"github.com/go-openapi/loads"
+	"github.com/go-openapi/spec"
+	"github.com/go-openapi/strfmt"
 	"github.com/go-openapi/swag"
+	"github.com/go-openapi/validate"
 	"github.com/pkg/errors"
 )
 
@@ -28,18 +31,6 @@ func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Re
 	a, err := newAPIVerifier(definitionPath)
 	a.setOptions(options...)
 	return a.verifyRequest, err
-}
-
-// NewResponseVerifier returns a function that can be used to verify if response
-// satisfies OpenAPI definition constraints. Two perform such alidation we need
-// to specify context in which current response was received, and that is represented
-// by method and url paramters
-func NewResponseVerifier(definitionPath, method, url string, options ...option) (func(*http.Response) error, error) {
-	a, err := newAPIVerifier(definitionPath)
-	a.setOptions(options...)
-	return func(res *http.Response) error {
-		return a.verifyResponse(method, url, res)
-	}, err
 }
 
 // NewVerifier returns a function that can be used to verify both - a request
@@ -89,7 +80,57 @@ func (a *apiVerifier) verifyRequest(*http.Request) error {
 
 // verifyResponse verifies if the response is valid according to OpenAPI definition
 // and configured options
-func (a *apiVerifier) verifyResponse(method, url string, res *http.Response) error {
+func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) (errorParam error) {
+	response, err := a.getResponseDef(req, res)
+	if err != nil {
+		errorParam = err
+		return
+	}
+
+	err = checkIfSchemaOrResponseEmpty(response.Schema, res)
+	if err != nil {
+		return errors.Wrap(err, "either defined schema or response body is empty")
+	}
+
+	var decoded map[string]interface{}
+	err = json.NewDecoder(res.Body).Decode(&decoded)
+	if err != nil {
+		return errors.Wrap(err, "failed to read and decode response body")
+	}
+	defer func() {
+		err = res.Body.Close()
+		if err != nil {
+			errorParam = err
+		}
+	}()
+	errorParam = validate.AgainstSchema(response.Schema, decoded, strfmt.Default)
+	return
+}
+
+func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*spec.Response, error) {
+	pathTmpl, _, ok := a.mapper.mapRequest(req)
+	if !ok {
+		return nil, errors.New("no path template matches current request")
+	}
+	pathDef, ok := a.doc.Spec().Paths.Paths[pathTmpl]
+	if !ok {
+		return nil, errors.New("no matching path template found in the definition")
+	}
+	response, err := a.responseByMethodAndStatus(req.Method, res.StatusCode, &pathDef)
+	if err != nil {
+		return nil, errors.Wrap(err, "response not valid")
+	}
+	return response, nil
+}
+
+func checkIfSchemaOrResponseEmpty(schema *spec.Schema, res *http.Response) error {
+	if schema == nil && (res.ContentLength != -1 && res.ContentLength != 0) {
+		return errors.New("schema is not defined")
+	}
+
+	if schema != nil && (res.ContentLength == -1 || res.ContentLength == 0) {
+		return errors.New("response body is empty")
+	}
 	return nil
 }
 
@@ -98,13 +139,52 @@ func (a *apiVerifier) verify(req *http.Request, res *http.Response) error {
 	if err != nil {
 		return nil
 	}
-	return a.verifyResponse(req.Method, req.URL.Path, res)
+	return a.verifyResponse(req, res)
 }
 
 func (a *apiVerifier) setOptions(options ...option) {
 	for _, opt := range options {
 		opt(a)
 	}
+}
+
+func (a *apiVerifier) responseByMethodAndStatus(method string, status int, pathDef *spec.PathItem) (*spec.Response, error) {
+	operation, err := a.operationByMethod(method, pathDef)
+	if err != nil {
+		return nil, errors.Wrap(err, "response definition not configured")
+	}
+	response := operation.OperationProps.Responses.Default
+	if def, ok := operation.OperationProps.Responses.StatusCodeResponses[status]; ok {
+		response = &def
+	}
+	if response == nil {
+		return nil, errors.New("neither default nor response schema for current status code is defined")
+	}
+	return response, nil
+}
+
+func (a *apiVerifier) operationByMethod(method string, pathDef *spec.PathItem) (*spec.Operation, error) {
+	var operation *spec.Operation
+	switch method {
+	case http.MethodGet:
+		operation = pathDef.Get
+	case http.MethodPut:
+		operation = pathDef.Put
+	case http.MethodPost:
+		operation = pathDef.Post
+	case http.MethodDelete:
+		operation = pathDef.Delete
+	case http.MethodOptions:
+		operation = pathDef.Options
+	case http.MethodHead:
+		operation = pathDef.Head
+	case http.MethodPatch:
+		operation = pathDef.Patch
+	}
+	if operation == nil {
+		return nil, errors.New("no operation configured for method: " + method)
+	}
+	return operation, nil
 }
 
 func (a *apiVerifier) initDocument(raw []byte) error {
@@ -133,34 +213,26 @@ func (a *apiVerifier) initDocument(raw []byte) error {
 func (a *apiVerifier) initMapper() error {
 	requestsMap := make(map[string][]string)
 	for path, pathItem := range a.doc.Spec().Paths.Paths {
-
 		if pathItem.Get != nil {
 			requestsMap[http.MethodGet] = append(requestsMap[http.MethodGet], path)
-			continue
 		}
 		if pathItem.Put != nil {
 			requestsMap[http.MethodPut] = append(requestsMap[http.MethodPut], path)
-			continue
 		}
 		if pathItem.Post != nil {
 			requestsMap[http.MethodPost] = append(requestsMap[http.MethodPost], path)
-			continue
 		}
 		if pathItem.Delete != nil {
 			requestsMap[http.MethodDelete] = append(requestsMap[http.MethodDelete], path)
-			continue
 		}
 		if pathItem.Options != nil {
 			requestsMap[http.MethodOptions] = append(requestsMap[http.MethodOptions], path)
-			continue
 		}
 		if pathItem.Head != nil {
 			requestsMap[http.MethodHead] = append(requestsMap[http.MethodHead], path)
-			continue
 		}
 		if pathItem.Patch != nil {
 			requestsMap[http.MethodPatch] = append(requestsMap[http.MethodPatch], path)
-			continue
 		}
 	}
 	a.mapper = newSimpleMapper(requestsMap)
