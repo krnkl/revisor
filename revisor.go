@@ -80,10 +80,11 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 	if err != nil {
 		return err
 	}
-	// TODO: check if param is required
-	err = checkIfSchemaOrBodyIsEmpty(requestDef.Schema, req.ContentLength)
-	if err != nil {
-		return errors.Wrap(err, "either defined schema or request body is empty")
+	if requestDef.Required {
+		err = checkIfSchemaOrBodyIsEmpty(requestDef.Schema, req.ContentLength)
+		if err != nil {
+			return errors.Wrap(err, "either defined schema or request body is empty")
+		}
 	}
 
 	decoded, err := decodeBody(req.Body)
