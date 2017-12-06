@@ -27,7 +27,7 @@ before_script:
 
 script:
 - go vet -v
-- gometalinter --config=.gometalinter.json
+- gometalinter --deadline=10m --config=.gometalinter.json
 - go test -v -covermode=count -coverprofile=profile.cov .
 
 after_success:
