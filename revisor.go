@@ -2,6 +2,7 @@ package revisor
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/go-openapi/loads"
@@ -35,10 +36,10 @@ func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Re
 
 // NewVerifier returns a function that can be used to verify both - a request
 // and the response made in the context of the request
-func NewVerifier(definitionPath string, options ...option) (func(*http.Request, *http.Response) error, error) {
+func NewVerifier(definitionPath string, options ...option) (func(*http.Response, *http.Request) error, error) {
 	a, err := newAPIVerifier(definitionPath)
 	a.setOptions(options...)
-	return a.verify, err
+	return a.verifyRequestAndReponse, err
 }
 
 func newAPIVerifier(definitionPath string) (*apiVerifier, error) {
@@ -74,72 +75,131 @@ type apiVerifier struct {
 
 // verifyRequest verifies if request is valid according to OpenAPI definition
 // and configured options
-func (a *apiVerifier) verifyRequest(*http.Request) error {
-	return nil
+func (a *apiVerifier) verifyRequest(req *http.Request) error {
+	requestDef, err := a.getRequestDef(req)
+	if err != nil {
+		return err
+	}
+	if requestDef.Required {
+		err = checkIfSchemaOrBodyIsEmpty(requestDef.Schema, req.ContentLength)
+		if err != nil {
+			return errors.Wrap(err, "either defined schema or request body is empty")
+		}
+	}
+
+	decoded, err := decodeBody(req.Body)
+	if err != nil {
+		return errors.Wrap(err, "failed to decode request")
+	}
+	return validate.AgainstSchema(requestDef.Schema, decoded, strfmt.Default)
+
 }
 
 // verifyResponse verifies if the response is valid according to OpenAPI definition
 // and configured options
-func (a *apiVerifier) verifyResponse(req *http.Request, res *http.Response) (errorParam error) {
+func (a *apiVerifier) verifyResponse(res *http.Response, req *http.Request) error {
 	response, err := a.getResponseDef(req, res)
 	if err != nil {
-		errorParam = err
-		return
+		return err
 	}
 
-	err = checkIfSchemaOrResponseEmpty(response.Schema, res)
+	err = checkIfSchemaOrBodyIsEmpty(response.Schema, res.ContentLength)
 	if err != nil {
 		return errors.Wrap(err, "either defined schema or response body is empty")
 	}
 
-	var decoded map[string]interface{}
-	err = json.NewDecoder(res.Body).Decode(&decoded)
+	decoded, err := decodeBody(res.Body)
 	if err != nil {
-		return errors.Wrap(err, "failed to read and decode response body")
+		return errors.Wrap(err, "failed to decode response")
 	}
-	defer func() {
-		err = res.Body.Close()
-		if err != nil {
-			errorParam = err
-		}
-	}()
-	errorParam = validate.AgainstSchema(response.Schema, decoded, strfmt.Default)
-	return
+	return validate.AgainstSchema(response.Schema, decoded, strfmt.Default)
 }
 
-func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*spec.Response, error) {
+// getRequestDef checks parameters defined on both Path and Operation components
+// returns an error if no body parameters were found
+func (a *apiVerifier) getRequestDef(req *http.Request) (*spec.Parameter, error) {
+	pathDef, err := a.getPathDef(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get pathItem defintiion")
+	}
+	operation, err := a.operationByMethod(req.Method, pathDef)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get operation defintiion")
+	}
+	reqBodyParameter := getBodyParameter(operation.Parameters)
+	if reqBodyParameter == nil {
+		reqBodyParameter = getBodyParameter(pathDef.Parameters)
+	}
+	if reqBodyParameter == nil {
+		return nil, errors.New("no body parameter definition found")
+	}
+	return reqBodyParameter, nil
+}
+
+// getBodyParameter filters parameter of type body from list of parameters
+// it returns first occurence of such parameter
+func getBodyParameter(params []spec.Parameter) *spec.Parameter {
+	for _, parameter := range params {
+		if parameter.In == "body" {
+			return &parameter
+		}
+	}
+	return nil
+}
+
+func (a *apiVerifier) getPathDef(req *http.Request) (*spec.PathItem, error) {
+
 	pathTmpl, _, ok := a.mapper.mapRequest(req)
 	if !ok {
 		return nil, errors.New("no path template matches current request")
 	}
 	pathDef, ok := a.doc.Spec().Paths.Paths[pathTmpl]
 	if !ok {
-		return nil, errors.New("no matching path template found in the definition")
+		return nil, errors.New("no path item definition found for path template")
 	}
-	response, err := a.responseByMethodAndStatus(req.Method, res.StatusCode, &pathDef)
+	return &pathDef, nil
+}
+
+func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*spec.Response, error) {
+
+	pathDef, err := a.getPathDef(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get path item defintiion")
+	}
+	response, err := a.responseByMethodAndStatus(req.Method, res.StatusCode, pathDef)
 	if err != nil {
 		return nil, errors.Wrap(err, "response not valid")
 	}
 	return response, nil
 }
 
-func checkIfSchemaOrResponseEmpty(schema *spec.Schema, res *http.Response) error {
-	if schema == nil && (res.ContentLength != -1 && res.ContentLength != 0) {
+// checkIfSchemaOrBodyIsEmpty accepts Schema definition and length
+// of either request or response body
+func checkIfSchemaOrBodyIsEmpty(schema *spec.Schema, contentLen int64) error {
+	if schema == nil && (contentLen != -1 && contentLen != 0) {
 		return errors.New("schema is not defined")
 	}
-
-	if schema != nil && (res.ContentLength == -1 || res.ContentLength == 0) {
-		return errors.New("response body is empty")
+	if schema != nil && (contentLen == -1 || contentLen == 0) {
+		return errors.New("body is empty")
 	}
 	return nil
 }
 
-func (a *apiVerifier) verify(req *http.Request, res *http.Response) error {
+func (a *apiVerifier) verifyRequestAndReponse(res *http.Response, req *http.Request) error {
+	var report error
 	err := a.verifyRequest(req)
 	if err != nil {
-		return nil
+		report = errors.Wrap(err, "request validation failed")
+		if res != nil && res.StatusCode < 400 {
+			report = errors.Wrap(err, "request validation faild but response status code is ok")
+		}
 	}
-	return a.verifyResponse(req, res)
+
+	err = a.verifyResponse(res, req)
+	if err != nil {
+		report = errors.Wrap(err, "response validation failed")
+	}
+	return report
 }
 
 func (a *apiVerifier) setOptions(options ...option) {
@@ -203,7 +263,7 @@ func (a *apiVerifier) initDocument(raw []byte) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to load swagger spec")
 	}
-	a.doc, err = doc.Expanded(nil)
+	a.doc, err = doc.Expanded(&spec.ExpandOptions{RelativeBase: a.definitionPath})
 	if err != nil {
 		return errors.Wrap(err, "failed to expand document")
 	}
@@ -237,4 +297,19 @@ func (a *apiVerifier) initMapper() error {
 	}
 	a.mapper = newSimpleMapper(requestsMap)
 	return nil
+}
+
+func decodeBody(r io.ReadCloser) (decoded interface{}, errorParam error) {
+
+	err := json.NewDecoder(r).Decode(&decoded)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read and decode")
+	}
+	defer func() {
+		err = r.Close()
+		if err != nil {
+			errorParam = err
+		}
+	}()
+	return
 }

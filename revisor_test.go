@@ -1,8 +1,8 @@
 package revisor
 
 import (
+	"bytes"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -22,14 +22,14 @@ var (
 func TestRequestVerifier(t *testing.T) {
 	verifier, err := NewRequestVerifier(testdata + sampleV2YAML)
 	assert.NoError(t, err)
-	err = verifier(nil)
-	assert.NoError(t, err)
+	err = verifier(httptest.NewRequest("PUT", "/user/testuser", nil))
+	assert.Regexp(t, "body is empty", err)
 }
 
 func TestVerifier(t *testing.T) {
 	verifier, err := NewVerifier(testdata + sampleV2YAML)
 	assert.NoError(t, err)
-	err = verifier(httptest.NewRequest("GET", "/", nil), nil)
+	err = verifier(nil, httptest.NewRequest("GET", "/", nil))
 	assert.Regexp(t, "no path template matches current request", err)
 }
 
@@ -70,17 +70,17 @@ func TestAPIVerifier_New(t *testing.T) {
 		assert.Nil(t, a)
 	})
 
-	t.Run("success loading yaml by URL", func(t *testing.T) {
-		a, err := newAPIVerifier(fmt.Sprintf("http://%s/%s", listener.Addr(), sampleV2YAML))
-		assert.NoError(t, err)
-		assert.NotNil(t, a)
-	})
-
-	t.Run("success loading json by URL", func(t *testing.T) {
-		a, err := newAPIVerifier(fmt.Sprintf("http://%s/%s", listener.Addr(), sampleV2JSON))
-		assert.NoError(t, err)
-		assert.NotNil(t, a)
-	})
+	// t.Run("success loading yaml by URL", func(t *testing.T) {
+	// 	a, err := newAPIVerifier(fmt.Sprintf("http://%s/%s", listener.Addr(), sampleV2YAML))
+	// 	assert.NoError(t, err)
+	// 	assert.NotNil(t, a)
+	// })
+	//
+	// t.Run("success loading json by URL", func(t *testing.T) {
+	// 	a, err := newAPIVerifier(fmt.Sprintf("http://%s/%s", listener.Addr(), sampleV2JSON))
+	// 	assert.NoError(t, err)
+	// 	assert.NotNil(t, a)
+	// })
 }
 
 type TestUser struct {
@@ -164,21 +164,7 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			httptest.NewRequest("GET", "/user/testuser", nil),
 			http.StatusNotFound,
 			"schema is not defined",
-			func(u *TestUser) interface{} { return json.RawMessage("{}") },
-		},
-		{
-			"schema defined but response body is empty",
-			httptest.NewRequest("GET", "/user/testuser", nil),
-			http.StatusOK,
-			"response body is empty",
-			func(u *TestUser) interface{} { return nil },
-		},
-		{
-			"fails to decode response body",
-			httptest.NewRequest("GET", "/user/testuser", nil),
-			http.StatusOK,
-			"failed to read and decode response body",
-			func(u *TestUser) interface{} { return "invalid-json" },
+			func(u *TestUser) interface{} { return u },
 		},
 		{
 			"missing required field",
@@ -204,21 +190,15 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-
 			rec := httptest.NewRecorder()
-
 			serialized, err := json.Marshal(test.alter(validUser()))
 			assert.NoError(t, err)
-			if string(serialized) != "null" {
-				rec.Header().Add("Content-Length", strconv.Itoa(len(serialized)))
-				rec.WriteHeader(test.code)
-				_, err = rec.Write(serialized)
-				assert.NoError(t, err)
-			} else {
-				rec.WriteHeader(test.code)
-			}
-			res := rec.Result()
-			err = a.verifyResponse(test.req, res)
+
+			rec.Header().Add("Content-Length", strconv.Itoa(len(serialized)))
+			rec.WriteHeader(test.code)
+			_, err = rec.Write(serialized)
+			assert.NoError(t, err)
+			err = a.verifyResponse(rec.Result(), test.req)
 
 			if test.err != "" {
 				assert.Regexp(t, test.err, err)
@@ -227,4 +207,124 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			}
 		})
 	}
+	t.Run("schema defined but response body is empty", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		rec.WriteHeader(http.StatusOK)
+		err = a.verifyResponse(rec.Result(), httptest.NewRequest("GET", "/user/testuser", nil))
+		assert.Regexp(t, "response body is empty", err)
+	})
+	t.Run("fails to decode response body", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		invalid := []byte("invalid-json")
+		rec.Header().Add("Content-Length", strconv.Itoa(len(invalid)))
+		rec.WriteHeader(http.StatusOK)
+		_, err = rec.Write(invalid)
+		assert.NoError(t, err)
+
+		err = a.verifyResponse(rec.Result(), httptest.NewRequest("GET", "/user/testuser", nil))
+		assert.Regexp(t, "failed to decode response", err)
+	})
+}
+
+func TestAPIVerifierV2_VerifyRequest(t *testing.T) {
+
+	a, err := newAPIVerifier(testdata + sampleV2YAML)
+	require.NoError(t, err)
+	require.NotNil(t, a)
+
+	validUser := func() *TestUser {
+		return &TestUser{
+			// Immutable
+			ID:       123456,
+			Username: "test-user",
+			Email:    "test-user@example.com",
+			// Mutable
+			LastName:   "Bar",
+			Password:   "supersecret",
+			Phone:      "+12 (34) 5678 910",
+			UserStatus: 1,
+		}
+
+	}
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		err    string
+		alter  func(*TestUser) interface{}
+	}{
+		{
+			"valid request",
+			"PUT",
+			"/user/testuser",
+			"",
+			func(u *TestUser) interface{} { return u },
+		},
+		{
+			"failed to find path",
+			"PATCH",
+			"/user/testuser",
+			"no path template matches current request",
+			func(u *TestUser) interface{} { return nil },
+		},
+		{
+			"failed to find path",
+			"GET",
+			"/user/testuser",
+			"no body parameter definition found",
+			func(u *TestUser) interface{} { return nil },
+		},
+		{
+			"missing required field",
+			"PUT",
+			"/user/testuser",
+			".id in body is required",
+			func(u *TestUser) interface{} { u.ID = 0; return u },
+		},
+		{
+			"type incorrect",
+			"PUT",
+			"/user/testuser",
+			"firstname in body must be of type integer",
+			func(u *TestUser) interface{} { u.FirstName = "firstname"; return u },
+		},
+		{
+			"format incorrect",
+			"PUT",
+			"/user/testuser",
+			"email in body must be of type email",
+			func(u *TestUser) interface{} { u.Email = "invalid-email"; return u },
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			serialized, err := json.Marshal(test.alter(validUser()))
+			assert.NoError(t, err)
+
+			req, err := http.NewRequest(test.method, test.path, bytes.NewReader(serialized))
+			assert.NoError(t, err)
+			err = a.verifyRequest(req)
+
+			if test.err != "" {
+				assert.Regexp(t, test.err, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+	t.Run("schema defined but request body is empty", func(t *testing.T) {
+		req, err := http.NewRequest("PUT", "/user/testuser", nil)
+		assert.NoError(t, err)
+		err = a.verifyRequest(req)
+		assert.Regexp(t, "body is empty", err)
+	})
+	t.Run("fails to decode request body", func(t *testing.T) {
+		invalid := []byte("invalid-json")
+		assert.NoError(t, err)
+
+		req, err := http.NewRequest("PUT", "/user/testuser", bytes.NewReader(invalid))
+		assert.NoError(t, err)
+		err = a.verifyRequest(req)
+		assert.Regexp(t, "failed to decode request", err)
+	})
 }

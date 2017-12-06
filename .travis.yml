@@ -9,7 +9,6 @@ env:
   - DOCKER_COMPOSE_VERSION="1.7.1"
 
 install:
-- git clone https://github.com/zalando/nakadi.git nakadi
 - go get -v github.com/pkg/errors
 - go get -v github.com/gorilla/mux
 - go get -v github.com/mattn/goveralls
@@ -27,7 +26,7 @@ before_script:
 
 script:
 - go vet -v
-- gometalinter --exclude="which can be annoying to use" .
+- gometalinter --deadline=10m --config=.gometalinter.json
 - go test -v -covermode=count -coverprofile=profile.cov .
 
 after_success:
