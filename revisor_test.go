@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -194,7 +193,6 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			serialized, err := json.Marshal(test.alter(validUser()))
 			assert.NoError(t, err)
 
-			rec.Header().Add("Content-Length", strconv.Itoa(len(serialized)))
 			rec.WriteHeader(test.code)
 			_, err = rec.Write(serialized)
 			assert.NoError(t, err)
@@ -216,7 +214,6 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 	t.Run("fails to decode response body", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		invalid := []byte("invalid-json")
-		rec.Header().Add("Content-Length", strconv.Itoa(len(invalid)))
 		rec.WriteHeader(http.StatusOK)
 		_, err = rec.Write(invalid)
 		assert.NoError(t, err)

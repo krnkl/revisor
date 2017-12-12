@@ -81,15 +81,16 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if requestDef.Required {
-		err = checkIfSchemaOrBodyIsEmpty(requestDef.Schema, req.ContentLength)
-		if err != nil {
-			return errors.Wrap(err, "either defined schema or request body is empty")
-		}
-	}
 	body, err := readRequestBody(req)
 	if err != nil {
 		return errors.Wrap(err, "failed to verify request")
+	}
+
+	if requestDef.Required {
+		err = checkIfSchemaOrBodyIsEmpty(requestDef.Schema, len(body))
+		if err != nil {
+			return errors.Wrap(err, "either defined schema or request body is empty")
+		}
 	}
 	decoded, err := decodeBody(body)
 	if err != nil {
@@ -106,14 +107,13 @@ func (a *apiVerifier) verifyResponse(res *http.Response, req *http.Request) erro
 	if err != nil {
 		return err
 	}
-
-	err = checkIfSchemaOrBodyIsEmpty(response.Schema, res.ContentLength)
-	if err != nil {
-		return errors.Wrap(err, "either defined schema or response body is empty")
-	}
 	body, err := readResponseBody(res)
 	if err != nil {
-		return errors.Wrap(err, "request not valid")
+		return errors.Wrap(err, "response not valid")
+	}
+	err = checkIfSchemaOrBodyIsEmpty(response.Schema, len(body))
+	if err != nil {
+		return errors.Wrap(err, "either defined schema or response body is empty")
 	}
 	decoded, err := decodeBody(body)
 	if err != nil {
@@ -182,11 +182,11 @@ func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*sp
 
 // checkIfSchemaOrBodyIsEmpty accepts Schema definition and length
 // of either request or response body
-func checkIfSchemaOrBodyIsEmpty(schema *spec.Schema, contentLen int64) error {
-	if schema == nil && (contentLen != -1 && contentLen != 0) {
+func checkIfSchemaOrBodyIsEmpty(schema *spec.Schema, bodyLen int) error {
+	if schema == nil && bodyLen != 0 {
 		return errors.New("schema is not defined")
 	}
-	if schema != nil && (contentLen == -1 || contentLen == 0) {
+	if schema != nil && bodyLen == 0 {
 		return errors.New("body is empty")
 	}
 	return nil
@@ -319,6 +319,9 @@ func decodeBody(body []byte) (interface{}, error) {
 // ReadCloser associated with request will be assigned a new buffer value,
 // so that upstream calls will be able to read the body again.
 func readRequestBody(r *http.Request) ([]byte, error) {
+	if r.Body == nil {
+		return []byte{}, nil
+	}
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return nil, errors.Wrap(err, "error reading request body")
@@ -331,6 +334,9 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 // ReadCloser associated with reponse will be assigned a new buffer value,
 // so that upstream calls will be able to read the body again.
 func readResponseBody(r *http.Response) ([]byte, error) {
+	if r.Body == nil {
+		return []byte{}, nil
+	}
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return nil, errors.Wrap(err, "error reading response body")
