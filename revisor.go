@@ -191,7 +191,7 @@ func (a *apiVerifier) verifyRequestAndReponse(res *http.Response, req *http.Requ
 	if err != nil {
 		report = errors.Wrap(err, "request validation failed")
 		if res != nil && res.StatusCode < 400 {
-			report = errors.Wrap(err, "request validation faild but response status code is ok")
+			report = errors.Wrap(err, "request validation failed but response status code is ok")
 		}
 	}
 
