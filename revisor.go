@@ -85,19 +85,23 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to verify request")
 	}
-
-	if requestDef.Required {
-		err = checkIfSchemaOrBodyIsEmpty(requestDef.Schema, len(body))
-		if err != nil {
-			return errors.Wrap(err, "either defined schema or request body is empty")
+	if requestDef != nil {
+		if requestDef.Required {
+			err = checkIfSchemaOrBodyIsEmpty(requestDef.Schema, len(body))
+			if err != nil {
+				return errors.Wrap(err, "either defined schema or request body is empty")
+			}
 		}
+		decoded, err := decodeBody(body)
+		if err != nil {
+			return errors.Wrap(err, "failed to decode request")
+		}
+		return validate.AgainstSchema(requestDef.Schema, decoded, strfmt.Default)
 	}
-	decoded, err := decodeBody(body)
-	if err != nil {
-		return errors.Wrap(err, "failed to decode request")
+	if requestDef == nil && len(body) != 0 {
+		return errors.New("failed to verify request: definition is not defined but body is not empty")
 	}
-	return validate.AgainstSchema(requestDef.Schema, decoded, strfmt.Default)
-
+	return nil
 }
 
 // verifyResponse verifies if the response is valid according to OpenAPI definition
@@ -136,9 +140,6 @@ func (a *apiVerifier) getRequestDef(req *http.Request) (*spec.Parameter, error) 
 	reqBodyParameter := getBodyParameter(operation.Parameters)
 	if reqBodyParameter == nil {
 		reqBodyParameter = getBodyParameter(pathDef.Parameters)
-	}
-	if reqBodyParameter == nil {
-		return nil, errors.New("no body parameter definition found")
 	}
 	return reqBodyParameter, nil
 }

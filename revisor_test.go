@@ -265,11 +265,11 @@ func TestAPIVerifierV2_VerifyRequest(t *testing.T) {
 			func(u *TestUser) interface{} { return nil },
 		},
 		{
-			"failed to find path",
+			"no definition but body not empty",
 			"GET",
 			"/user/testuser",
-			"no body parameter definition found",
-			func(u *TestUser) interface{} { return nil },
+			"definition is not defined but body is not empty",
+			func(u *TestUser) interface{} { return u },
 		},
 		{
 			"missing required field",
