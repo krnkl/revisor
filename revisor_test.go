@@ -299,6 +299,7 @@ func TestAPIVerifierV2_VerifyRequest(t *testing.T) {
 			assert.NoError(t, err)
 
 			req, err := http.NewRequest(test.method, test.path, bytes.NewReader(serialized))
+			req.Header.Add("Content-Type", "application/json")
 			assert.NoError(t, err)
 			err = a.verifyRequest(req)
 
