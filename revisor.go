@@ -1,8 +1,9 @@
 package revisor
 
 import (
+	"bytes"
 	"encoding/json"
-	"io"
+	"io/ioutil"
 	"net/http"
 
 	"github.com/go-openapi/loads"
@@ -86,8 +87,11 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 			return errors.Wrap(err, "either defined schema or request body is empty")
 		}
 	}
-
-	decoded, err := decodeBody(req.Body)
+	body, err := readRequestBody(req)
+	if err != nil {
+		return errors.Wrap(err, "failed to verify request")
+	}
+	decoded, err := decodeBody(body)
 	if err != nil {
 		return errors.Wrap(err, "failed to decode request")
 	}
@@ -107,8 +111,11 @@ func (a *apiVerifier) verifyResponse(res *http.Response, req *http.Request) erro
 	if err != nil {
 		return errors.Wrap(err, "either defined schema or response body is empty")
 	}
-
-	decoded, err := decodeBody(res.Body)
+	body, err := readResponseBody(res)
+	if err != nil {
+		return errors.Wrap(err, "request not valid")
+	}
+	decoded, err := decodeBody(body)
 	if err != nil {
 		return errors.Wrap(err, "failed to decode response")
 	}
@@ -299,17 +306,35 @@ func (a *apiVerifier) initMapper() error {
 	return nil
 }
 
-func decodeBody(r io.ReadCloser) (decoded interface{}, errorParam error) {
-
-	err := json.NewDecoder(r).Decode(&decoded)
+func decodeBody(body []byte) (interface{}, error) {
+	var decoded interface{}
+	err := json.Unmarshal(body, &decoded)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to read and decode")
+		return nil, errors.Wrap(err, "failed to decode")
 	}
-	defer func() {
-		err = r.Close()
-		if err != nil {
-			errorParam = err
-		}
-	}()
-	return
+	return decoded, nil
+}
+
+// readRequestBody reads contents from the request body and returns slice of bytes
+// ReadCloser associated with request will be assigned a new buffer value,
+// so that upstream calls will be able to read the body again.
+func readRequestBody(r *http.Request) ([]byte, error) {
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return nil, errors.Wrap(err, "error reading request body")
+	}
+	r.Body = ioutil.NopCloser(bytes.NewReader(body))
+	return body, nil
+}
+
+// readResponseBody reads contents from the response body and returns slice of bytes
+// ReadCloser associated with reponse will be assigned a new buffer value,
+// so that upstream calls will be able to read the body again.
+func readResponseBody(r *http.Response) ([]byte, error) {
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return nil, errors.Wrap(err, "error reading response body")
+	}
+	r.Body = ioutil.NopCloser(bytes.NewReader(body))
+	return body, nil
 }
