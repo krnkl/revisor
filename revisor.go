@@ -1,8 +1,9 @@
 package revisor
 
 import (
+	"bytes"
 	"encoding/json"
-	"io"
+	"io/ioutil"
 	"net/http"
 
 	"github.com/go-openapi/loads"
@@ -80,19 +81,27 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if requestDef.Required {
-		err = checkIfSchemaOrBodyIsEmpty(requestDef.Schema, req.ContentLength)
-		if err != nil {
-			return errors.Wrap(err, "either defined schema or request body is empty")
-		}
-	}
-
-	decoded, err := decodeBody(req.Body)
+	body, err := readRequestBody(req)
 	if err != nil {
-		return errors.Wrap(err, "failed to decode request")
+		return errors.Wrap(err, "failed to verify request")
 	}
-	return validate.AgainstSchema(requestDef.Schema, decoded, strfmt.Default)
-
+	if requestDef != nil {
+		if requestDef.Required {
+			err = checkIfSchemaOrBodyIsEmpty(requestDef.Schema, len(body))
+			if err != nil {
+				return errors.Wrap(err, "either defined schema or request body is empty")
+			}
+		}
+		decoded, err := decodeBody(body)
+		if err != nil {
+			return errors.Wrap(err, "failed to decode request")
+		}
+		return validate.AgainstSchema(requestDef.Schema, decoded, strfmt.Default)
+	}
+	if requestDef == nil && len(body) != 0 {
+		return errors.New("failed to verify request: definition is not defined but body is not empty")
+	}
+	return nil
 }
 
 // verifyResponse verifies if the response is valid according to OpenAPI definition
@@ -102,13 +111,15 @@ func (a *apiVerifier) verifyResponse(res *http.Response, req *http.Request) erro
 	if err != nil {
 		return err
 	}
-
-	err = checkIfSchemaOrBodyIsEmpty(response.Schema, res.ContentLength)
+	body, err := readResponseBody(res)
+	if err != nil {
+		return errors.Wrap(err, "response not valid")
+	}
+	err = checkIfSchemaOrBodyIsEmpty(response.Schema, len(body))
 	if err != nil {
 		return errors.Wrap(err, "either defined schema or response body is empty")
 	}
-
-	decoded, err := decodeBody(res.Body)
+	decoded, err := decodeBody(body)
 	if err != nil {
 		return errors.Wrap(err, "failed to decode response")
 	}
@@ -129,9 +140,6 @@ func (a *apiVerifier) getRequestDef(req *http.Request) (*spec.Parameter, error) 
 	reqBodyParameter := getBodyParameter(operation.Parameters)
 	if reqBodyParameter == nil {
 		reqBodyParameter = getBodyParameter(pathDef.Parameters)
-	}
-	if reqBodyParameter == nil {
-		return nil, errors.New("no body parameter definition found")
 	}
 	return reqBodyParameter, nil
 }
@@ -175,11 +183,11 @@ func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*sp
 
 // checkIfSchemaOrBodyIsEmpty accepts Schema definition and length
 // of either request or response body
-func checkIfSchemaOrBodyIsEmpty(schema *spec.Schema, contentLen int64) error {
-	if schema == nil && (contentLen != -1 && contentLen != 0) {
+func checkIfSchemaOrBodyIsEmpty(schema *spec.Schema, bodyLen int) error {
+	if schema == nil && bodyLen != 0 {
 		return errors.New("schema is not defined")
 	}
-	if schema != nil && (contentLen == -1 || contentLen == 0) {
+	if schema != nil && bodyLen == 0 {
 		return errors.New("body is empty")
 	}
 	return nil
@@ -191,7 +199,7 @@ func (a *apiVerifier) verifyRequestAndReponse(res *http.Response, req *http.Requ
 	if err != nil {
 		report = errors.Wrap(err, "request validation failed")
 		if res != nil && res.StatusCode < 400 {
-			report = errors.Wrap(err, "request validation faild but response status code is ok")
+			report = errors.Wrap(err, "request validation failed but response status code is ok")
 		}
 	}
 
@@ -299,17 +307,41 @@ func (a *apiVerifier) initMapper() error {
 	return nil
 }
 
-func decodeBody(r io.ReadCloser) (decoded interface{}, errorParam error) {
-
-	err := json.NewDecoder(r).Decode(&decoded)
+func decodeBody(body []byte) (interface{}, error) {
+	var decoded interface{}
+	err := json.Unmarshal(body, &decoded)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to read and decode")
+		return nil, errors.Wrap(err, "failed to decode")
 	}
-	defer func() {
-		err = r.Close()
-		if err != nil {
-			errorParam = err
-		}
-	}()
-	return
+	return decoded, nil
+}
+
+// readRequestBody reads contents from the request body and returns slice of bytes
+// ReadCloser associated with request will be assigned a new buffer value,
+// so that upstream calls will be able to read the body again.
+func readRequestBody(r *http.Request) ([]byte, error) {
+	if r.Body == nil {
+		return []byte{}, nil
+	}
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return nil, errors.Wrap(err, "error reading request body")
+	}
+	r.Body = ioutil.NopCloser(bytes.NewReader(body))
+	return body, nil
+}
+
+// readResponseBody reads contents from the response body and returns slice of bytes
+// ReadCloser associated with reponse will be assigned a new buffer value,
+// so that upstream calls will be able to read the body again.
+func readResponseBody(r *http.Response) ([]byte, error) {
+	if r.Body == nil {
+		return []byte{}, nil
+	}
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return nil, errors.Wrap(err, "error reading response body")
+	}
+	r.Body = ioutil.NopCloser(bytes.NewReader(body))
+	return body, nil
 }
