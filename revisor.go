@@ -102,17 +102,16 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 				return errors.Wrap(err, "either defined schema or request body is empty")
 			}
 		}
-	contentType, err := a.matchRequestContentType(req.Header.Get("Content-Type"), consumes)
-	if err != nil {
-		return err
-	}
+		contentType, err := a.matchRequestContentType(req.Header.Get("Content-Type"), consumes)
+		if err != nil {
+			return err
+		}
 
-	decoded, err := decodeBody(contentType, body)
+		decoded, err := decodeBody(contentType, body)
 		if err != nil {
 			return errors.Wrap(err, "failed to decode request")
 		}
 		return validate.AgainstSchema(requestDef.Schema, decoded, strfmt.Default)
-	}
 	}
 	return nil
 }
@@ -133,7 +132,7 @@ func (a *apiVerifier) verifyResponse(res *http.Response, req *http.Request) erro
 		return errors.Wrap(err, "either defined schema or response body is empty")
 	}
 
-	decoded, err := decodeBody("application/json", res.Body)
+	decoded, err := decodeBody("application/json", body)
 	if err != nil {
 		return errors.Wrap(err, "failed to decode response")
 	}
@@ -348,25 +347,15 @@ func (a *apiVerifier) initMapper() error {
 	return nil
 }
 
-func decodeBody(body []byte) (interface{}, error) {
-	var decoded interface{}
-	err := json.Unmarshal(body, &decoded)
+func decodeBody(contentType string, body []byte) (interface{}, error) {
+	decoder := getDecoder(contentType)
+	decoded, err := decoder(body)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decode")
 	}
 	return decoded, nil
 }
 
-l
-}
-func decodeBody(contentType string, body []byte) (decoded interface{}, errorParam error) {
-	decoder := getDecoder(contentType)
-
-	decoded, err := decoder(r)
-	if err != nil {
-		errorParam = errors.Wrap(err, "failed to decode")
-	}
-}
 // readRequestBody reads contents from the request body and returns slice of bytes
 // ReadCloser associated with request will be assigned a new buffer value,
 // so that upstream calls will be able to read the body again.
@@ -382,7 +371,7 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 	return body, nil
 }
 
-/ readResponseBody reads contents from the response body and returns slice of bytes
+// readResponseBody reads contents from the response body and returns slice of bytes
 // ReadCloser associated with reponse will be assigned a new buffer value,
 // so that upstream calls will be able to read the body again.
 func readResponseBody(r *http.Response) ([]byte, error) {
@@ -397,7 +386,7 @@ func readResponseBody(r *http.Response) ([]byte, error) {
 	return body, nil
 }
 
-func getDecoder(contentType string) func([] byte) (interface{}, error) {
+func getDecoder(contentType string) func([]byte) (interface{}, error) {
 	if strings.Contains(contentType, "json") {
 		return jsonDecoder
 	}
@@ -411,7 +400,7 @@ func nopDecoder([]byte) (interface{}, error) {
 }
 
 func jsonDecoder(b []byte) (decoded interface{}, err error) {
-	err = json.Unmarshal(b,&decoded)
+	err = json.Unmarshal(b, &decoded)
 	if err != nil {
 		err = errors.Wrap(err, "failed to decode json")
 		decoded = nil
