@@ -321,8 +321,11 @@ func TestAPIVerifierV2_VerifyRequest(t *testing.T) {
 		assert.NoError(t, err)
 
 		req, err := http.NewRequest("PUT", "/user/testuser", bytes.NewReader(invalid))
+		req.Header.Add("Content-Type", "application/json")
 		assert.NoError(t, err)
 		err = a.verifyRequest(req)
 		assert.Regexp(t, "failed to decode request", err)
 	})
+	// TODO add tests:
+	// Content-Type strict mode disabled
 }

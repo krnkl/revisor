@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/go-openapi/loads"
@@ -27,7 +26,7 @@ type options struct {
 	strictContentType bool
 }
 
-/// StrictContentType is an example implementation of option setter function
+// StrictContentType is an example implementation of option setter function
 // TODO add proper description
 func StrictContentType(opt bool) option {
 	return func(a *apiVerifier) {
@@ -113,6 +112,9 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 		}
 		return validate.AgainstSchema(requestDef.Schema, decoded, strfmt.Default)
 	}
+	if requestDef == nil && len(body) != 0 {
+		return errors.New("failed to verify request: definition is not defined but body is not empty")
+	}
 	return nil
 }
 
@@ -172,16 +174,15 @@ func (a *apiVerifier) matchRequestContentType(contentType string, consumes []str
 		target := strings.Trim(typeStr, " ")
 		if a.opts.strictContentType {
 			if strings.Compare(matched, target) == 0 {
-				break
+				return matched, nil
 			}
 		} else {
-			match, err := regexp.MatchString(target, matched)
-			if match || err != nil {
-				return target, err
+			if strings.Contains(matched, target) {
+				return matched, nil
 			}
 		}
 	}
-	return matched, nil
+	return "", errors.New("Content-Type is not configured: " + contentType)
 }
 
 // getBodyParameter filters parameter of type body from list of parameters
@@ -393,10 +394,6 @@ func getDecoder(contentType string) func([]byte) (interface{}, error) {
 	return func([]byte) (interface{}, error) {
 		return nil, errors.New("failed to decode as " + contentType)
 	}
-}
-
-func nopDecoder([]byte) (interface{}, error) {
-	return nil, nil
 }
 
 func jsonDecoder(b []byte) (decoded interface{}, err error) {
