@@ -193,6 +193,7 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			serialized, err := json.Marshal(test.alter(validUser()))
 			assert.NoError(t, err)
 
+			rec.Header().Set("Content-Type", "application/json")
 			rec.WriteHeader(test.code)
 			_, err = rec.Write(serialized)
 			assert.NoError(t, err)
@@ -214,6 +215,7 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 	t.Run("fails to decode response body", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		invalid := []byte("invalid-json")
+		rec.Header().Set("Content-Type", "application/json")
 		rec.WriteHeader(http.StatusOK)
 		_, err = rec.Write(invalid)
 		assert.NoError(t, err)
@@ -221,6 +223,7 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 		err = a.verifyResponse(rec.Result(), httptest.NewRequest("GET", "/user/testuser", nil))
 		assert.Regexp(t, "failed to decode response", err)
 	})
+	// TODO: add tests with disabled strict Content-Type when content type matches or doesn't match
 }
 
 func TestAPIVerifierV2_VerifyRequest(t *testing.T) {

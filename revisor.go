@@ -26,6 +26,11 @@ type options struct {
 	strictContentType bool
 }
 
+// NoStrictContentType disables strict content-type validation which is enabled by default
+func NoStrictContentType(a *apiVerifier) {
+	a.opts.strictContentType = false
+}
+
 // StrictContentType is an example implementation of option setter function
 // TODO add proper description
 func StrictContentType(opt bool) option {
@@ -101,7 +106,7 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 				return errors.Wrap(err, "either defined schema or request body is empty")
 			}
 		}
-		contentType, err := a.matchRequestContentType(req.Header.Get("Content-Type"), consumes)
+		contentType, err := a.matchContentType(req.Header.Get("Content-Type"), consumes)
 		if err != nil {
 			return err
 		}
@@ -121,7 +126,7 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 // verifyResponse verifies if the response is valid according to OpenAPI definition
 // and configured options
 func (a *apiVerifier) verifyResponse(res *http.Response, req *http.Request) error {
-	response, err := a.getResponseDef(req, res)
+	response, produces, err := a.getResponseDef(req, res)
 	if err != nil {
 		return err
 	}
@@ -134,7 +139,11 @@ func (a *apiVerifier) verifyResponse(res *http.Response, req *http.Request) erro
 		return errors.Wrap(err, "either defined schema or response body is empty")
 	}
 
-	decoded, err := decodeBody("application/json", body)
+	contentType, err := a.matchContentType(res.Header.Get("Content-Type"), produces)
+	if err != nil {
+		return err
+	}
+	decoded, err := decodeBody(contentType, body)
 	if err != nil {
 		return errors.Wrap(err, "failed to decode response")
 	}
@@ -165,12 +174,12 @@ func (a *apiVerifier) getRequestDef(req *http.Request) (*spec.Parameter, []strin
 	return reqBodyParameter, consumes, nil
 }
 
-func (a *apiVerifier) matchRequestContentType(contentType string, consumes []string) (string, error) {
-	if len(consumes) == 0 && a.opts.strictContentType {
-		return "", errors.New("consumes is empty")
+func (a *apiVerifier) matchContentType(contentType string, allowed []string) (string, error) {
+	if len(allowed) == 0 && a.opts.strictContentType {
+		return "", errors.New("array of allowed content types is empty")
 	}
 	matched := strings.Trim(contentType, " ")
-	for _, typeStr := range consumes {
+	for _, typeStr := range allowed {
 		target := strings.Trim(typeStr, " ")
 		if a.opts.strictContentType {
 			if strings.Compare(matched, target) == 0 {
@@ -209,17 +218,25 @@ func (a *apiVerifier) getPathDef(req *http.Request) (*spec.PathItem, error) {
 	return &pathDef, nil
 }
 
-func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*spec.Response, error) {
+func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*spec.Response, []string, error) {
 
 	pathDef, err := a.getPathDef(req)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get path item defintiion")
+		return nil, nil, errors.Wrap(err, "failed to get path item defintiion")
 	}
-	response, err := a.responseByMethodAndStatus(req.Method, res.StatusCode, pathDef)
+	operation, err := a.operationByMethod(req.Method, pathDef)
 	if err != nil {
-		return nil, errors.Wrap(err, "response not valid")
+		return nil, nil, errors.Wrap(err, "response definition not configured")
 	}
-	return response, nil
+	response, err := a.responseByStatus(res.StatusCode, operation)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "response not valid")
+	}
+	produces := operation.Produces
+	if len(produces) == 0 {
+		produces = a.doc.Spec().Produces
+	}
+	return response, produces, nil
 }
 
 // checkIfSchemaOrBodyIsEmpty accepts Schema definition and length
@@ -257,11 +274,7 @@ func (a *apiVerifier) setOptions(options ...option) {
 	}
 }
 
-func (a *apiVerifier) responseByMethodAndStatus(method string, status int, pathDef *spec.PathItem) (*spec.Response, error) {
-	operation, err := a.operationByMethod(method, pathDef)
-	if err != nil {
-		return nil, errors.Wrap(err, "response definition not configured")
-	}
+func (a *apiVerifier) responseByStatus(status int, operation *spec.Operation) (*spec.Response, error) {
 	response := operation.OperationProps.Responses.Default
 	if def, ok := operation.OperationProps.Responses.StatusCodeResponses[status]; ok {
 		response = &def
