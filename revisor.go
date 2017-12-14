@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
+	"strings"
 
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/spec"
@@ -20,11 +21,19 @@ const (
 
 type option func(*apiVerifier)
 
-// SetSomeOption is an example implementation of option setter function
-func SetSomeOption(opt string) option {
-	return func(a *apiVerifier) {
-		a.opt = opt
-	}
+// options is a struct that holds all possible options
+type options struct {
+	strictContentType bool
+}
+
+// NoStrictContentType disables strict content-type validation which is enabled by default.
+// StrictContentType validation will raise errors in the following cases:
+// - content-type header doesn't fully match content-types listed in consumes
+//   or produces section for request and response correspondingly
+// - consumes or produces section are not configured for current request request
+//   and response correspondingly
+func NoStrictContentType(a *apiVerifier) {
+	a.opts.strictContentType = false
 }
 
 // NewRequestVerifier returns a function that can be used to verify if request
@@ -50,9 +59,8 @@ func newAPIVerifier(definitionPath string) (*apiVerifier, error) {
 		return nil, errors.Wrap(err, "failed to load definition")
 	}
 
-	a := &apiVerifier{
-		definitionPath: definitionPath,
-	}
+	a := withDefaults(&apiVerifier{definitionPath: definitionPath})
+
 	err = a.initDocument(b)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build Document")
@@ -65,11 +73,16 @@ func newAPIVerifier(definitionPath string) (*apiVerifier, error) {
 	return a, nil
 }
 
+func withDefaults(a *apiVerifier) *apiVerifier {
+	a.opts.strictContentType = true
+	return a
+}
+
 // apiVerifier implements various verification functions and encloses various
 // verification options as well as an OpenAPI Document
 type apiVerifier struct {
 	definitionPath string
-	opt            string
+	opts           options
 	mapper         *simpleMapper
 	doc            *loads.Document
 }
@@ -77,7 +90,7 @@ type apiVerifier struct {
 // verifyRequest verifies if request is valid according to OpenAPI definition
 // and configured options
 func (a *apiVerifier) verifyRequest(req *http.Request) error {
-	requestDef, err := a.getRequestDef(req)
+	requestDef, consumes, err := a.getRequestDef(req)
 	if err != nil {
 		return err
 	}
@@ -92,7 +105,12 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 				return errors.Wrap(err, "either defined schema or request body is empty")
 			}
 		}
-		decoded, err := decodeBody(body)
+		contentType, err := a.matchContentType(req.Header.Get("Content-Type"), consumes)
+		if err != nil {
+			return err
+		}
+
+		decoded, err := decodeBody(contentType, body)
 		if err != nil {
 			return errors.Wrap(err, "failed to decode request")
 		}
@@ -107,7 +125,7 @@ func (a *apiVerifier) verifyRequest(req *http.Request) error {
 // verifyResponse verifies if the response is valid according to OpenAPI definition
 // and configured options
 func (a *apiVerifier) verifyResponse(res *http.Response, req *http.Request) error {
-	response, err := a.getResponseDef(req, res)
+	response, produces, err := a.getResponseDef(req, res)
 	if err != nil {
 		return err
 	}
@@ -119,7 +137,12 @@ func (a *apiVerifier) verifyResponse(res *http.Response, req *http.Request) erro
 	if err != nil {
 		return errors.Wrap(err, "either defined schema or response body is empty")
 	}
-	decoded, err := decodeBody(body)
+
+	contentType, err := a.matchContentType(res.Header.Get("Content-Type"), produces)
+	if err != nil {
+		return err
+	}
+	decoded, err := decodeBody(contentType, body)
 	if err != nil {
 		return errors.Wrap(err, "failed to decode response")
 	}
@@ -127,21 +150,47 @@ func (a *apiVerifier) verifyResponse(res *http.Response, req *http.Request) erro
 }
 
 // getRequestDef checks parameters defined on both Path and Operation components
+// Second return parameter is a slice of mime types that can be consumed by operation
 // returns an error if no body parameters were found
-func (a *apiVerifier) getRequestDef(req *http.Request) (*spec.Parameter, error) {
+func (a *apiVerifier) getRequestDef(req *http.Request) (*spec.Parameter, []string, error) {
 	pathDef, err := a.getPathDef(req)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get pathItem defintiion")
+		return nil, nil, errors.Wrap(err, "failed to get pathItem defintiion")
 	}
 	operation, err := a.operationByMethod(req.Method, pathDef)
+
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get operation defintiion")
+		return nil, nil, errors.Wrap(err, "failed to get operation defintiion")
 	}
 	reqBodyParameter := getBodyParameter(operation.Parameters)
 	if reqBodyParameter == nil {
 		reqBodyParameter = getBodyParameter(pathDef.Parameters)
 	}
-	return reqBodyParameter, nil
+	consumes := operation.Consumes
+	if len(consumes) == 0 {
+		consumes = a.doc.Spec().Consumes
+	}
+	return reqBodyParameter, consumes, nil
+}
+
+func (a *apiVerifier) matchContentType(contentType string, allowed []string) (string, error) {
+	if len(allowed) == 0 && a.opts.strictContentType {
+		return "", errors.New("array of allowed content types is empty")
+	}
+	matched := strings.Trim(contentType, " ")
+	for _, typeStr := range allowed {
+		target := strings.Trim(typeStr, " ")
+		if a.opts.strictContentType {
+			if strings.Compare(matched, target) == 0 {
+				return matched, nil
+			}
+		} else {
+			if strings.Contains(matched, target) {
+				return matched, nil
+			}
+		}
+	}
+	return "", errors.New("Content-Type is not configured: " + contentType)
 }
 
 // getBodyParameter filters parameter of type body from list of parameters
@@ -168,17 +217,25 @@ func (a *apiVerifier) getPathDef(req *http.Request) (*spec.PathItem, error) {
 	return &pathDef, nil
 }
 
-func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*spec.Response, error) {
+func (a *apiVerifier) getResponseDef(req *http.Request, res *http.Response) (*spec.Response, []string, error) {
 
 	pathDef, err := a.getPathDef(req)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get path item defintiion")
+		return nil, nil, errors.Wrap(err, "failed to get path item defintiion")
 	}
-	response, err := a.responseByMethodAndStatus(req.Method, res.StatusCode, pathDef)
+	operation, err := a.operationByMethod(req.Method, pathDef)
 	if err != nil {
-		return nil, errors.Wrap(err, "response not valid")
+		return nil, nil, errors.Wrap(err, "response definition not configured")
 	}
-	return response, nil
+	response, err := a.responseByStatus(res.StatusCode, operation)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "response not valid")
+	}
+	produces := operation.Produces
+	if len(produces) == 0 {
+		produces = a.doc.Spec().Produces
+	}
+	return response, produces, nil
 }
 
 // checkIfSchemaOrBodyIsEmpty accepts Schema definition and length
@@ -216,11 +273,7 @@ func (a *apiVerifier) setOptions(options ...option) {
 	}
 }
 
-func (a *apiVerifier) responseByMethodAndStatus(method string, status int, pathDef *spec.PathItem) (*spec.Response, error) {
-	operation, err := a.operationByMethod(method, pathDef)
-	if err != nil {
-		return nil, errors.Wrap(err, "response definition not configured")
-	}
+func (a *apiVerifier) responseByStatus(status int, operation *spec.Operation) (*spec.Response, error) {
 	response := operation.OperationProps.Responses.Default
 	if def, ok := operation.OperationProps.Responses.StatusCodeResponses[status]; ok {
 		response = &def
@@ -307,9 +360,9 @@ func (a *apiVerifier) initMapper() error {
 	return nil
 }
 
-func decodeBody(body []byte) (interface{}, error) {
-	var decoded interface{}
-	err := json.Unmarshal(body, &decoded)
+func decodeBody(contentType string, body []byte) (interface{}, error) {
+	decoder := getDecoder(contentType)
+	decoded, err := decoder(body)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decode")
 	}
@@ -344,4 +397,22 @@ func readResponseBody(r *http.Response) ([]byte, error) {
 	}
 	r.Body = ioutil.NopCloser(bytes.NewReader(body))
 	return body, nil
+}
+
+func getDecoder(contentType string) func([]byte) (interface{}, error) {
+	if strings.Contains(contentType, "json") {
+		return jsonDecoder
+	}
+	return func([]byte) (interface{}, error) {
+		return nil, errors.New("failed to decode as " + contentType)
+	}
+}
+
+func jsonDecoder(b []byte) (decoded interface{}, err error) {
+	err = json.Unmarshal(b, &decoded)
+	if err != nil {
+		err = errors.Wrap(err, "failed to decode json")
+		decoded = nil
+	}
+	return
 }

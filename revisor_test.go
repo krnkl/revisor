@@ -3,6 +3,7 @@ package revisor
 import (
 	"bytes"
 	"encoding/json"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -193,6 +194,7 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			serialized, err := json.Marshal(test.alter(validUser()))
 			assert.NoError(t, err)
 
+			rec.Header().Set("Content-Type", "application/json")
 			rec.WriteHeader(test.code)
 			_, err = rec.Write(serialized)
 			assert.NoError(t, err)
@@ -205,15 +207,18 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 			}
 		})
 	}
+
 	t.Run("schema defined but response body is empty", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		rec.WriteHeader(http.StatusOK)
 		err = a.verifyResponse(rec.Result(), httptest.NewRequest("GET", "/user/testuser", nil))
 		assert.Regexp(t, "response body is empty", err)
 	})
+
 	t.Run("fails to decode response body", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		invalid := []byte("invalid-json")
+		rec.Header().Set("Content-Type", "application/json")
 		rec.WriteHeader(http.StatusOK)
 		_, err = rec.Write(invalid)
 		assert.NoError(t, err)
@@ -221,6 +226,28 @@ func TestAPIVerifierV2_VerifyResponse(t *testing.T) {
 		err = a.verifyResponse(rec.Result(), httptest.NewRequest("GET", "/user/testuser", nil))
 		assert.Regexp(t, "failed to decode response", err)
 	})
+
+	t.Run("fails to read body", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		rec.WriteHeader(http.StatusOK)
+		res := rec.Result()
+		res.Body = ioutil.NopCloser(&brokenReader{})
+		err = a.verifyResponse(res, httptest.NewRequest("GET", "/user/testuser", nil))
+		assert.Regexp(t, "error reading response body", err)
+	})
+
+	t.Run("content-type is not configured", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		rec.Header().Set("Content-Type", "image/json")
+		rec.WriteHeader(http.StatusOK)
+		_, err := rec.WriteString("binary-payload")
+		assert.NoError(t, err)
+		err = a.verifyResponse(rec.Result(), httptest.NewRequest("GET", "/user/testuser", nil))
+		assert.Regexp(t, "Content-Type is not configured", err)
+	})
+	// TODO produces is empty in strict mode raises error and don't with desabled strictContentType
+	// TODO request validation failed but response status code is ok
+	// TODO o decoder found for content-type
 }
 
 func TestAPIVerifierV2_VerifyRequest(t *testing.T) {
@@ -292,6 +319,13 @@ func TestAPIVerifierV2_VerifyRequest(t *testing.T) {
 			"email in body must be of type email",
 			func(u *TestUser) interface{} { u.Email = "invalid-email"; return u },
 		},
+		{
+			"no definition with payload",
+			"GET",
+			"/user/testuser",
+			"definition is not defined but body is not empty",
+			func(u *TestUser) interface{} { return u },
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -299,6 +333,7 @@ func TestAPIVerifierV2_VerifyRequest(t *testing.T) {
 			assert.NoError(t, err)
 
 			req, err := http.NewRequest(test.method, test.path, bytes.NewReader(serialized))
+			req.Header.Add("Content-Type", "application/json")
 			assert.NoError(t, err)
 			err = a.verifyRequest(req)
 
@@ -317,11 +352,30 @@ func TestAPIVerifierV2_VerifyRequest(t *testing.T) {
 	})
 	t.Run("fails to decode request body", func(t *testing.T) {
 		invalid := []byte("invalid-json")
-		assert.NoError(t, err)
 
 		req, err := http.NewRequest("PUT", "/user/testuser", bytes.NewReader(invalid))
 		assert.NoError(t, err)
+		req.Header.Add("Content-Type", "application/json")
 		err = a.verifyRequest(req)
 		assert.Regexp(t, "failed to decode request", err)
 	})
+	t.Run("fails to read body", func(t *testing.T) {
+		req, err := http.NewRequest("PUT", "/user/testuser", &brokenReader{})
+		assert.NoError(t, err)
+		err = a.verifyRequest(req)
+		assert.Regexp(t, "error reading request body", err)
+	})
+	t.Run("content-type not configured", func(t *testing.T) {
+		req, err := http.NewRequest("PUT", "/user/testuser", bytes.NewReader([]byte("{}")))
+		assert.NoError(t, err)
+		req.Header.Add("Content-Type", "image/jpeg")
+		err = a.verifyRequest(req)
+		assert.Regexp(t, "Content-Type is not configured", err)
+	})
+	// TODO consumes is empty in strict mode raises error and don't with desabled strictContentType
+	// TODO o decoder found for content-type
 }
+
+type brokenReader struct{}
+
+func (br *brokenReader) Read([]byte) (int, error) { return 0, assert.AnError }
