@@ -26,17 +26,14 @@ type options struct {
 	strictContentType bool
 }
 
-// NoStrictContentType disables strict content-type validation which is enabled by default
+// NoStrictContentType disables strict content-type validation which is enabled by default.
+// StrictContentType validation will raise errors in the following cases:
+// - content-type header doesn't fully match content-types listed in consumes
+//   or produces section for request and response correspondingly
+// - consumes or produces section are not configured for current request request
+//   and response correspondingly
 func NoStrictContentType(a *apiVerifier) {
 	a.opts.strictContentType = false
-}
-
-// StrictContentType is an example implementation of option setter function
-// TODO add proper description
-func StrictContentType(opt bool) option {
-	return func(a *apiVerifier) {
-		a.opts.strictContentType = opt
-	}
 }
 
 // NewRequestVerifier returns a function that can be used to verify if request
@@ -62,11 +59,8 @@ func newAPIVerifier(definitionPath string) (*apiVerifier, error) {
 		return nil, errors.Wrap(err, "failed to load definition")
 	}
 
-	a := &apiVerifier{
-		definitionPath: definitionPath,
-		// TODO setup defaults opts in separate func
-		opts: options{strictContentType: true},
-	}
+	a := withDefaults(&apiVerifier{definitionPath: definitionPath})
+
 	err = a.initDocument(b)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build Document")
@@ -77,6 +71,11 @@ func newAPIVerifier(definitionPath string) (*apiVerifier, error) {
 		return nil, errors.Wrap(err, "failed to create request mapper")
 	}
 	return a, nil
+}
+
+func withDefaults(a *apiVerifier) *apiVerifier {
+	a.opts.strictContentType = true
+	return a
 }
 
 // apiVerifier implements various verification functions and encloses various
