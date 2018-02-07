@@ -9,7 +9,7 @@ import (
 )
 
 func TestSimpleMapper_New(t *testing.T) {
-	mapper := newSimpleMapper(map[string][]string{
+	mapper := newSimpleMapper("", map[string][]string{
 		"GET": []string{"/path", "/path/{id}"},
 	})
 	assert.NotNil(t, mapper)
@@ -17,7 +17,7 @@ func TestSimpleMapper_New(t *testing.T) {
 
 func TestSimpleMapper_MapRequest(t *testing.T) {
 
-	mapper := newSimpleMapper(map[string][]string{
+	mapper := newSimpleMapper("", map[string][]string{
 		"GET": []string{"/path", "/path/{id}"},
 	})
 	mapper.router.Methods("OPTIONS")

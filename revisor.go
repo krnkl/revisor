@@ -24,6 +24,7 @@ type option func(*apiVerifier)
 // options is a struct that holds all possible options
 type options struct {
 	strictContentType bool
+	ignoreBasePath    bool
 }
 
 // NoStrictContentType disables strict content-type validation which is enabled by default.
@@ -36,11 +37,21 @@ func NoStrictContentType(a *apiVerifier) {
 	a.opts.strictContentType = false
 }
 
+// IgnoreBasePath disables check if request path is contains base path configured in API document.
+// By default, base path is always checked.
+func IgnoreBasePath(a *apiVerifier) {
+	a.opts.ignoreBasePath = true
+}
+
 // NewRequestVerifier returns a function that can be used to verify if request
 // satisfies OpenAPI definition constraints
 func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Request) error, error) {
 	a, err := newAPIVerifier(definitionPath)
 	a.setOptions(options...)
+	err = a.initMapper(a.doc.Spec().BasePath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create request mapper")
+	}
 	return a.verifyRequest, err
 }
 
@@ -49,6 +60,11 @@ func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Re
 func NewVerifier(definitionPath string, options ...option) (func(*http.Response, *http.Request) error, error) {
 	a, err := newAPIVerifier(definitionPath)
 	a.setOptions(options...)
+
+	err = a.initMapper(a.doc.Spec().BasePath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create request mapper")
+	}
 	return a.verifyRequestAndReponse, err
 }
 
@@ -65,16 +81,12 @@ func newAPIVerifier(definitionPath string) (*apiVerifier, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build Document")
 	}
-
-	err = a.initMapper()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create request mapper")
-	}
 	return a, nil
 }
 
 func withDefaults(a *apiVerifier) *apiVerifier {
 	a.opts.strictContentType = true
+	a.opts.ignoreBasePath = false
 	return a
 }
 
@@ -331,7 +343,7 @@ func (a *apiVerifier) initDocument(raw []byte) error {
 	return nil
 }
 
-func (a *apiVerifier) initMapper() error {
+func (a *apiVerifier) initMapper(basePath string) error {
 	requestsMap := make(map[string][]string)
 	for path, pathItem := range a.doc.Spec().Paths.Paths {
 		if pathItem.Get != nil {
@@ -356,7 +368,10 @@ func (a *apiVerifier) initMapper() error {
 			requestsMap[http.MethodPatch] = append(requestsMap[http.MethodPatch], path)
 		}
 	}
-	a.mapper = newSimpleMapper(requestsMap)
+	if a.opts.ignoreBasePath {
+		basePath = ""
+	}
+	a.mapper = newSimpleMapper(basePath, requestsMap)
 	return nil
 }
 
