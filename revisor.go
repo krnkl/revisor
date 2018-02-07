@@ -47,6 +47,9 @@ func IgnoreBasePath(a *apiVerifier) {
 // satisfies OpenAPI definition constraints
 func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Request) error, error) {
 	a, err := newAPIVerifier(definitionPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create verifier function")
+	}
 	a.setOptions(options...)
 	err = a.initMapper(a.doc.Spec().BasePath)
 	if err != nil {
@@ -59,6 +62,9 @@ func NewRequestVerifier(definitionPath string, options ...option) (func(*http.Re
 // and the response made in the context of the request
 func NewVerifier(definitionPath string, options ...option) (func(*http.Response, *http.Request) error, error) {
 	a, err := newAPIVerifier(definitionPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create verifier function")
+	}
 	a.setOptions(options...)
 
 	err = a.initMapper(a.doc.Spec().BasePath)
