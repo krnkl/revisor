@@ -670,6 +670,9 @@ definitions:
         type: integer
       phone:
         type: string
+      birthday:
+        type: string
+        format: date
       user_status:
         type: integer
         format: int32
