@@ -2,14 +2,15 @@ package revisor
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
 
-func newSimpleMapper(templateMap map[string][]string) *simpleMapper {
+func newSimpleMapper(basePath string, templateMap map[string][]string) *simpleMapper {
 
-	router := mux.NewRouter().StrictSlash(true)
-	mapper := &simpleMapper{router: router}
+	router := mux.NewRouter().StrictSlash(true).PathPrefix(basePath).Subrouter()
+	mapper := &simpleMapper{router: router, basePath: basePath}
 	for k, v := range templateMap {
 		for _, tmpl := range v {
 			router.Methods(k).Path(tmpl)
@@ -20,7 +21,8 @@ func newSimpleMapper(templateMap map[string][]string) *simpleMapper {
 }
 
 type simpleMapper struct {
-	router *mux.Router
+	router   *mux.Router
+	basePath string
 }
 
 // mapRequest returns configured template that matches HTTP
@@ -35,7 +37,7 @@ func (s *simpleMapper) mapRequest(r *http.Request) (tmpl string, vars map[string
 		if err != nil {
 			return "", nil, false
 		}
-		return tmpl, match.Vars, true
+		return strings.TrimPrefix(tmpl, s.basePath), match.Vars, true
 	}
 	return "", nil, false
 }
